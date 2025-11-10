@@ -1,0 +1,311 @@
+/* Global Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f4f4f4;
+}
+
+/* Header Styles */
+.header {
+  background-color: #2e3192;
+  color: #fff;
+  padding: 15px 30px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header .logo {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.header .nav {
+  display: flex;
+  gap: 15px;
+}
+
+.header .nav a {
+  color: #fff;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+/* Hero Section */
+.home-hero {
+  text-align: center;
+  padding: 60px 20px;
+  background-color: #e6e6e6;
+}
+
+.home-hero h2 {
+  font-size: 28px;
+  margin-bottom: 20px;
+}
+
+.home-hero p {
+  font-size: 18px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* Button Styles */
+.button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  display: inline-block;
+  text-align: center;
+  min-width: 120px;
+}
+
+/* Login & Signup Button Styling */
+.button-login,
+.button-signup {
+  background-color: #fff;
+  color: #2e3192;
+  border: 2px solid #2e3192;
+  text-decoration: none;
+  font-size: 16px;
+  padding: 10px 15px;
+  text-align: center;
+  display: inline-block;
+  transition: background-color 0.3s ease-in-out, color 0.3s ease-in-out;
+}
+
+.button-login:hover,
+.button-signup:hover {
+  background-color: #2e3192;
+  color: white;
+}
+
+/* Authentication Pages */
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #f4f4f4;
+}
+
+.auth-box {
+  background-color: #fff;
+  padding: 40px;
+  border-radius: 10px;
+  width: 350px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.auth-box h2 {
+  margin-bottom: 20px;
+  color: #2e3192;
+}
+
+.auth-box input {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+.auth-box button {
+  width: 100%;
+  padding: 10px;
+  background-color: #2e3192;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.auth-box p {
+  margin-top: 15px;
+  font-size: 14px;
+}
+
+.auth-box p a {
+  color: #2e3192;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+/* Login Type Selector */
+.login-type-selector {
+  display: flex;
+  margin-bottom: 20px;
+  background-color: #f0f0f0;
+  border-radius: 20px;
+  padding: 5px;
+}
+
+.login-type-selector button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 20px;
+  font-weight: bold;
+  transition: background-color 0.3s;
+}
+
+.login-type-selector button.active {
+  background-color: #2e3192;
+  color: white;
+}
+
+/* Dashboard */
+.dashboard-container {
+  text-align: center;
+  padding: 50px 20px;
+}
+
+.dashboard-container h2 {
+  margin-bottom: 30px;
+  color: #2e3192;
+}
+
+.dashboard-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+}
+
+.dashboard-buttons button {
+  padding: 15px 25px;
+  background-color: #2e3192;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* Submit Complaint Page */
+.submit-container {
+  max-width: 500px;
+  margin: 50px auto;
+  background-color: #fff;
+  padding: 40px;
+  border-radius: 10px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.submit-container h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #2e3192;
+}
+
+.submit-container form input,
+.submit-container form textarea {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+}
+
+.submit-container form button {
+  width: 100%;
+  padding: 10px;
+  background-color: #2e3192;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* Status Page */
+.status-container {
+  max-width: 800px;
+  margin: 50px auto;
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.status-container h2 {
+  text-align: center;
+  color: #2e3192;
+  margin-bottom: 20px;
+}
+
+.status-container table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+.status-container table th,
+.status-container table td {
+  border: 1px solid #ccc;
+  padding: 10px;
+  text-align: left;
+}
+
+.status-container table th {
+  background-color: #2e3192;
+  color: #fff;
+}
+
+/* Vote Button */
+.status-container table button {
+  background-color: #2e3192;
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 5px;
+  font-size: 14px;
+  transition: background-color 0.3s ease-in-out;
+}
+
+.status-container table button:hover {
+  background-color: #1e2377;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .header .nav {
+    margin-top: 10px;
+  }
+
+  .status-container {
+    width: 95%;
+    padding: 15px;
+  }
+
+  .submit-container {
+    width: 90%;
+    padding: 20px;
+  }
+
+  .dashboard-buttons {
+    flex-direction: column;
+  }
+  
+  .form-split {
+    flex-direction: column;
+  }
+  
+  .form-left,
+  .form-right {
+    width: 100%;
+  }
+}
