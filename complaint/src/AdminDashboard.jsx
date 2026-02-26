@@ -13,6 +13,8 @@ function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [noteText, setNoteText] = useState('');
   const [recentActivity, setRecentActivity] = useState([]);
+  const [showPriorityAlert, setShowPriorityAlert] = useState(false);
+  const [priorityComplaints, setPriorityComplaints] = useState([]);
   const [departments] = useState([
     "Water Department",
     "Road Department",
@@ -39,6 +41,18 @@ function AdminDashboard() {
     
     if (!isLoggedIn || userRole !== 'admin') {
       navigate('/login');
+    }
+    
+    // Check for priority complaints from login
+    const priorityComplaintsData = localStorage.getItem("priorityComplaints");
+    if (priorityComplaintsData) {
+      const priorityData = JSON.parse(priorityComplaintsData);
+      if (priorityData.length > 0) {
+        setPriorityComplaints(priorityData);
+        setShowPriorityAlert(true);
+        // Clear the localStorage item so the alert doesn't show again
+        localStorage.removeItem("priorityComplaints");
+      }
     }
   }, [navigate]);
 
@@ -512,6 +526,47 @@ function AdminDashboard() {
     fetchRecentActivity();
   }, []);
 
+  // Periodically check for new priority complaints
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const response = await axios.get(`${API_URL}/get_recent_activity`, { timeout: 5000 });
+        if (response.data) {
+          // Check if there are any new priority complaints
+          const priorityActivities = response.data.filter(activity => 
+            activity.type === "priority_complaint"
+          );
+          
+          // Check if we have any new priority complaints that weren't shown before
+          if (priorityActivities.length > 0) {
+            // Get the latest timestamp from current priority complaints
+            const latestTimestamp = priorityComplaints.length > 0 
+              ? Math.max(...priorityComplaints.map(c => new Date(c.timestamp).getTime()))
+              : 0;
+            
+            // Check if there are new priority complaints
+            const newPriorityActivities = priorityActivities.filter(activity => {
+              const activityTime = new Date(activity.timestamp).getTime();
+              return activityTime > latestTimestamp;
+            });
+            
+            if (newPriorityActivities.length > 0) {
+              setPriorityComplaints(prev => [...prev, ...newPriorityActivities]);
+              // Only show alert if it's not already visible
+              if (!showPriorityAlert) {
+                setShowPriorityAlert(true);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking for new priority complaints:', error);
+      }
+    }, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [priorityComplaints, showPriorityAlert]);
+
   return (
     <div className="admin-dashboard">
       <header className="dashboard-header">
@@ -526,6 +581,43 @@ function AdminDashboard() {
           </button>
         </div>
       </header>
+      
+      {/* Priority Complaint Alert Popup */}
+      {showPriorityAlert && (
+        <div className="priority-alert-overlay">
+          <div className="priority-alert-popup">
+            <div className="alert-header">
+              <h2>🚨 HIGH PRIORITY COMPLAINTS</h2>
+              <button 
+                className="close-alert" 
+                onClick={() => setShowPriorityAlert(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="alert-content">
+              <p>You have {priorityComplaints.length} high priority complaint(s) that require immediate attention:</p>
+              <ul>
+                {priorityComplaints.map((complaint, index) => (
+                  <li key={index}>
+                    <strong>{complaint.message}</strong>
+                    <br />
+                    <small>Reported {complaint.time_ago || 'recently'}</small>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="alert-actions">
+              <button 
+                className="acknowledge-btn" 
+                onClick={() => setShowPriorityAlert(false)}
+              >
+                Acknowledge
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       <div className="admin-tabs">
         <button 

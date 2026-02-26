@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Depression Detection — ML & BERT Models</title>
+<style>
+  body {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    font-family: "Poppins", sans-serif;
+    color: #fff;
+    margin: 0;
+    padding: 40px;
+    text-align: center;
+  }
+
+  h1 {
+    color: #00f5d4;
+    margin-bottom: 10px;
+  }
+
+  p {
+    color: #bbb;
+    font-size: 16px;
+  }
+
+  .container {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 40px;
+    flex-wrap: wrap;
+    margin-top: 40px;
+  }
+
+  .box {
+    width: 45%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 15px;
+    padding: 25px;
+    text-align: left;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.15);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .box:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 0 25px rgba(0, 255, 255, 0.25);
+  }
+
+  h2 {
+    color: #06d6a0;
+    border-bottom: 2px solid rgba(255,255,255,0.2);
+    padding-bottom: 6px;
+    margin-bottom: 15px;
+  }
+
+  pre {
+    background: rgba(0,0,0,0.6);
+    color: #00f5d4;
+    padding: 15px;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  code { color: #f9f871; }
+
+  footer {
+    margin-top: 50px;
+    color: #aaa;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+  }
+
+  @media (max-width: 900px) {
+    .box { width: 90%; }
+  }
+</style>
+</head>
+<body>
+
+  <h1>🧠 Depression Detection using BERT & ML Models</h1>
+  <p>Comparison of Machine Learning Pipeline vs Deep Learning BERT Fine-Tuning for text-based depression analysis.</p>
+
+  <div class="container">
+    <!-- Box 1: ML Model -->
+    <div class="box">
+      <h2>Part A — Machine Learning Pipeline (TF-IDF + SVM)</h2>
+      <pre><code>
+from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report
+
+# Building the pipeline
+ml_pipeline = Pipeline([
+    ("tfidf", TfidfVectorizer()),
+    ("svc", SVC(kernel="linear"))
+])
+
+print("Starting ML Pipeline training...")
+ml_pipeline.fit(X_train, y_train)
+print("Training complete.")
+
+# Making predictions
+y_pred = ml_pipeline.predict(X_test)
+
+# Evaluation
+print(classification_report(y_test, y_pred, 
+      target_names=["Non-Depressed", "Depressed"]))
+      </code></pre>
+    </div>
+
+    <!-- Box 2: BERT Model -->
+    <div class="box">
+      <h2>Part B — Deep Learning Model (BERT Fine-Tuning)</h2>
+      <pre><code>
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import Trainer, TrainingArguments
+import numpy as np
+import evaluate
+
+# Load pre-trained BERT and tokenizer
+model_name = "bert-base-uncased"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(
+    model_name, num_labels=2
+)
+
+# Tokenization
+def tokenize_function(examples):
+    return tokenizer(examples["text"], 
+                     padding="max_length", truncation=True)
+tokenized_datasets = dataset.map(tokenize_function, batched=True)
+
+# Training configuration
+training_args = TrainingArguments(
+    output_dir="./results",
+    evaluation_strategy="epoch",
+    learning_rate=2e-5,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    num_train_epochs=3,
+    weight_decay=0.01,
+    logging_dir="./logs",
+    load_best_model_at_end=True,
+    metric_for_best_model="f1",
+)
+
+# Metric calculation
+metric = evaluate.load("f1")
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    predictions = np.argmax(logits, axis=-1)
+    return metric.compute(predictions=predictions, references=labels)
+
+# Trainer API
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_datasets["train"],
+    eval_dataset=tokenized_datasets["test"],
+    tokenizer=tokenizer,
+    compute_metrics=compute_metrics,
+)
+
+print("Starting BERT fine-tuning...")
+trainer.train()
+print("Fine-tuning complete.")
+      </code></pre>
+    </div>
+  </div>
+
+  <footer>
+    © 2025 — Depression Detection using BERT | B.Tech AI & Data Science Mini Project
+  </footer>
+</body>
+</html>

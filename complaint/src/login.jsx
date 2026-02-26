@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import axios from 'axios';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -8,7 +9,7 @@ const Login = () => {
   const [loginType, setLoginType] = useState("user"); // "user" or "admin"
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
 
     if (loginType === "admin") {
@@ -17,6 +18,25 @@ const Login = () => {
         localStorage.setItem("isLoggedIn", "true");
         localStorage.setItem("userEmail", email);
         localStorage.setItem("userRole", "admin");
+        
+        // Check for priority complaints if this is an admin login
+        try {
+          const response = await axios.get('http://localhost:5000/get_recent_activity');
+          const activities = response.data;
+          
+          // Check if there are any priority complaints in recent activity
+          const priorityActivities = activities.filter(activity => 
+            activity.type === "priority_complaint"
+          );
+          
+          if (priorityActivities.length > 0) {
+            // Store the priority complaints in localStorage to show on dashboard
+            localStorage.setItem("priorityComplaints", JSON.stringify(priorityActivities));
+          }
+        } catch (error) {
+          console.error("Error checking for priority complaints:", error);
+        }
+        
         navigate("/admin");
       } else {
         alert("Invalid admin credentials!");

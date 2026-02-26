@@ -267,6 +267,9 @@ def submit_complaint():
         print(f"Inserting complaint with ID: {complaint_id}")
         complaints_collection.insert_one(complaint_entry)
         
+        # Check if this is a priority complaint and log it
+        check_priority_complaint(complaint_entry)
+        
         # Log activity
         log_activity("new_complaint", f"New complaint submitted in {predicted_category} category")
         
@@ -653,21 +656,8 @@ def get_recent_activity():
                 activity["_id"] = str(activity["_id"])
             if "timestamp" in activity:
                 # Calculate time ago
-                now = datetime.datetime.utcnow()
-                diff = now - activity["timestamp"]
-                
-                if diff.total_seconds() < 60:
-                    activity["time_ago"] = "just now"
-                elif diff.total_seconds() < 3600:
-                    minutes = int(diff.total_seconds() / 60)
-                    activity["time_ago"] = f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-                elif diff.total_seconds() < 86400:
-                    hours = int(diff.total_seconds() / 3600)
-                    activity["time_ago"] = f"{hours} hour{'s' if hours > 1 else ''} ago"
-                else:
-                    days = int(diff.total_seconds() / 86400)
-                    activity["time_ago"] = f"{days} day{'s' if days > 1 else ''} ago"
-                
+                time_ago = format_time_ago(activity["timestamp"])
+                activity["time_ago"] = time_ago
                 activity["timestamp"] = activity["timestamp"].isoformat()
                 
         return jsonify(activities)
@@ -686,6 +676,80 @@ def log_activity(activity_type, message):
         activity_collection.insert_one(activity)
     except Exception as e:
         print(f"Error logging activity: {e}")
+
+def format_time_ago(timestamp):
+    """Format timestamp to human-readable time ago string"""
+    try:
+        # If timestamp is already a string, parse it
+        if isinstance(timestamp, str):
+            timestamp = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        
+        now = datetime.datetime.utcnow()
+        # Make sure both timestamps are timezone-naive
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.replace(tzinfo=None)
+        if now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
+            
+        diff = now - timestamp
+        
+        if diff.total_seconds() < 60:
+            return "just now"
+        elif diff.total_seconds() < 3600:
+            minutes = int(diff.total_seconds() / 60)
+            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        elif diff.total_seconds() < 86400:
+            hours = int(diff.total_seconds() / 3600)
+            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+        else:
+            days = int(diff.total_seconds() / 86400)
+            return f"{days} day{'s' if days > 1 else ''} ago"
+    except Exception as e:
+        print(f"Error in format_time_ago: {e}")
+        return "recently"
+
+def check_priority_complaint(complaint_entry):
+    """Check if a complaint is high priority and log it"""
+    # Define what makes a complaint "priority"
+    # Priority score > 8 or contains urgent keywords
+    is_priority = (
+        complaint_entry.get("priority_score", 5) >= 8 or
+        any(keyword in complaint_entry.get("complaint", "").lower() 
+            for keyword in ["urgent", "emergency", "immediate", "critical", "asap"])
+    )
+    
+    # Also consider complaints with high votes as priority
+    if complaint_entry.get("votes", 0) >= 5:
+        is_priority = True
+    
+    if is_priority:
+        # Log priority complaint activity
+        category = complaint_entry.get("category", "Unknown")
+        priority_score = complaint_entry.get("priority_score", 5)
+        votes = complaint_entry.get("votes", 0)
+        
+        # Create a more detailed message
+        reason = []
+        if priority_score >= 8:
+            reason.append(f"High priority score ({priority_score})")
+        if votes >= 5:
+            reason.append(f"High votes ({votes})")
+        if any(keyword in complaint_entry.get("complaint", "").lower() 
+               for keyword in ["urgent", "emergency", "immediate", "critical", "asap"]):
+            reason.append("Contains urgent keywords")
+            
+        reason_str = ", ".join(reason)
+        
+        # Get time ago string
+        timestamp = complaint_entry.get("timestamp", datetime.datetime.utcnow())
+        time_ago = format_time_ago(timestamp)
+        
+        log_activity(
+            "priority_complaint", 
+            f"🚨 HIGH PRIORITY: New complaint in {category} category (Reason: {reason_str}) - Reported {time_ago}"
+        )
+    
+    return is_priority
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
