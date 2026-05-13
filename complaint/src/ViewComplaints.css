@@ -121,11 +121,11 @@
   transition: all 0.3s;
 }
 
-.checkbox-container:hover input ~ .checkmark {
+.checkbox-container:hover input~.checkmark {
   background-color: #ccc;
 }
 
-.checkbox-container input:checked ~ .checkmark {
+.checkbox-container input:checked~.checkmark {
   background-color: var(--primary-color);
 }
 
@@ -135,7 +135,7 @@
   display: none;
 }
 
-.checkbox-container input:checked ~ .checkmark:after {
+.checkbox-container input:checked~.checkmark:after {
   display: block;
 }
 
@@ -177,7 +177,7 @@
   padding: 25px;
   background-color: #f8f9fa;
   border-radius: var(--border-radius);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   text-align: center;
   transition: transform 0.3s ease;
 }
@@ -647,6 +647,67 @@
   color: var(--text-secondary);
 }
 
+/* AI Insights in Modal */
+.modal-ai-info {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.priority-reasons-box {
+  background: linear-gradient(135deg, #f0f7ff 0%, #e1effe 100%);
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 15px;
+}
+
+.priority-reasons-box h4 {
+  margin: 0 0 10px 0;
+  color: #1e40af;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.priority-reasons-box ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.priority-reasons-box li {
+  color: #1e3a8a;
+  font-size: 14px;
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.duplicate-alert-box {
+  background-color: #fef2f2;
+  border: 1px solid #fee2e2;
+  color: #991b1b;
+  padding: 12px 15px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.duplicate-badge-mini {
+  background-color: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fee2e2;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
 .complaint-content {
   padding: 20px;
   flex-grow: 1;
@@ -767,7 +828,8 @@
   cursor: not-allowed;
 }
 
-.comments-toggle, .share-button {
+.comments-toggle,
+.share-button {
   background-color: #f0f0f0;
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -780,7 +842,8 @@
   transition: all 0.2s ease;
 }
 
-.comments-toggle:hover, .share-button:hover {
+.comments-toggle:hover,
+.share-button:hover {
   background-color: #e0e0e0;
 }
 
@@ -916,24 +979,24 @@
     text-align: center;
     gap: 20px;
   }
-  
+
   .dashboard-controls {
     flex-direction: column;
     gap: 15px;
     align-items: flex-start;
   }
-  
+
   .filter-options {
     flex-direction: column;
     gap: 15px;
   }
-  
+
   .complaint-footer {
     flex-direction: column;
     align-items: flex-start;
     gap: 20px;
   }
-  
+
   .complaint-actions {
     width: 100%;
     justify-content: space-between;
@@ -944,15 +1007,16 @@
   .view-page {
     padding: 15px;
   }
-  
-  .priority-complaints-list, .complaints-list {
+
+  .priority-complaints-list,
+  .complaints-list {
     grid-template-columns: 1fr;
   }
-  
+
   .filter-group {
     min-width: 100%;
   }
-  
+
   .complaint-header {
     flex-direction: column;
     align-items: flex-start;
@@ -964,31 +1028,63 @@
   .view-header {
     padding: 15px;
   }
-  
+
   .header-content h1 {
     font-size: 24px;
   }
-  
+
   .analytics-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .category-bar-container {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
   }
-  
-  .category-name, .category-count {
+
+  .category-name,
+  .category-count {
     width: auto;
     text-align: left;
   }
+
+  .modal-overlay {
+    padding: 10px;
+  }
+
+  .modal-content {
+    max-height: 95vh;
+  }
+
+  .modal-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .modal-body h2 {
+    font-size: 18px;
+  }
+
+  .vote-buttons {
+    flex-direction: column;
+  }
+
+  .vote-buttons button {
+    width: 100%;
+  }
 }
+
 
 /* Loading animation */
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Admin Notes Section */
@@ -1181,6 +1277,43 @@
   margin-bottom: 20px;
   color: var(--text-color);
   line-height: 1.4;
+}
+
+.modal-qr-section {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background-color: #f8fafc;
+  padding: 15px;
+  border-radius: 10px;
+  margin: 20px 0;
+  border: 1px solid #e2e8f0;
+}
+
+.qr-box {
+  background: white;
+  padding: 5px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  display: flex;
+}
+
+.qr-info p {
+  margin: 0 0 5px 0;
+  font-weight: 600;
+  color: #1a3a6d;
+}
+
+.qr-info small {
+  color: #64748b;
+  font-family: monospace;
+}
+
+@media (max-width: 480px) {
+  .modal-qr-section {
+    flex-direction: column;
+    text-align: center;
+  }
 }
 
 /* Simplified Complaint Card */

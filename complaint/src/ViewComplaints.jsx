@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from 'axios';
-import './ViewComplaints.css';
+import { QRCodeCanvas } from 'qrcode.react';
+import "./ViewComplaints.css";
 
 function ViewComplaints() {
   const [complaints, setComplaints] = useState([]);
@@ -43,7 +44,7 @@ function ViewComplaints() {
       // Get categories first
       const categoriesRes = await axios.get(`${API_URL}/get_categories`);
       setCategories(categoriesRes.data);
-      
+
       // Fetch high priority complaints separately (excluding resolved complaints)
       const priorityResponse = await axios.get(`${API_URL}/get_complaints`, {
         params: {
@@ -54,7 +55,7 @@ function ViewComplaints() {
         },
         timeout: 10000
       });
-      
+
       if (priorityResponse.data && priorityResponse.data.complaints) {
         // Check if user has voted on each priority complaint
         const priorityComplaintsWithVoteStatus = priorityResponse.data.complaints.map(complaint => ({
@@ -79,7 +80,7 @@ function ViewComplaints() {
         console.error('Error fetching analytics:', analyticsErr);
         // Continue with complaint loading even if analytics fails
       }
-      
+
       // Then get regular complaints
       const complaintsRes = await axios.get(`${API_URL}/get_complaints`, {
         params: {
@@ -93,14 +94,14 @@ function ViewComplaints() {
         },
         timeout: 10000
       });
-      
+
       if (complaintsRes.data && complaintsRes.data.complaints) {
         // Check if user has voted on each complaint
         const complaintsWithVoteStatus = complaintsRes.data.complaints.map(complaint => ({
           ...complaint,
           userVoted: userEmail && complaint.voters && complaint.voters.includes(userEmail)
         }));
-        
+
         setComplaints(complaintsWithVoteStatus);
         setTotalPages(Math.ceil(complaintsRes.data.total / ITEMS_PER_PAGE));
         setCurrentPage(page);
@@ -160,48 +161,48 @@ function ViewComplaints() {
   const handleVote = async (complaintId, voteType) => {
     // Find the complaint to check its status
     const complaint = [...complaints, ...priorityComplaints].find(c => c._id === complaintId);
-    
+
     // Prevent voting on resolved complaints
     if (complaint && complaint.status === 'resolved') {
       alert('Cannot vote on resolved complaints.');
       return;
     }
-    
+
     try {
       await axios.post(`${API_URL}/vote_complaint`, {
         complaintId,
         voteType, // 'upvote' or 'downvote'
         userEmail // Pass the user's email to track their vote
       });
-      
+
       // Update the local state to reflect the vote
       setComplaints(complaints.map(complaint => {
         if (complaint._id === complaintId) {
           return {
             ...complaint,
-            votes: voteType === 'upvote' 
-              ? complaint.votes + 1 
+            votes: voteType === 'upvote'
+              ? complaint.votes + 1
               : complaint.votes - 1,
             userVoted: true
           };
         }
         return complaint;
       }));
-      
+
       // Also update priority complaints if this complaint is in that list
       setPriorityComplaints(priorityComplaints.map(complaint => {
         if (complaint._id === complaintId) {
           return {
             ...complaint,
-            votes: voteType === 'upvote' 
-              ? complaint.votes + 1 
+            votes: voteType === 'upvote'
+              ? complaint.votes + 1
               : complaint.votes - 1,
             userVoted: true
           };
         }
         return complaint;
       }));
-      
+
       // Refresh analytics if they are being shown
       if (showAnalytics) {
         refreshAnalytics();
@@ -216,28 +217,37 @@ function ViewComplaints() {
 
   const handleAddComment = async (complaintId) => {
     if (!newComment.trim()) return;
-    
+
     try {
       const response = await axios.post(`${API_URL}/add_comment`, {
         complaintId,
         comment: newComment
       });
-      
+
+      const commentObj = {
+        text: newComment,
+        timestamp: new Date().toISOString(),
+        user: userEmail || 'Anonymous User'
+      };
+
       // Update the local state with the new comment
       setComplaints(complaints.map(complaint => {
         if (complaint._id === complaintId) {
           return {
             ...complaint,
-            comments: [...(complaint.comments || []), {
-              text: newComment,
-              timestamp: new Date().toISOString(),
-              user: userEmail || 'Anonymous User'
-            }]
+            comments: [...(complaint.comments || []), commentObj]
           };
         }
         return complaint;
       }));
-      
+
+      if (selectedComplaint && selectedComplaint._id === complaintId) {
+        setSelectedComplaint({
+          ...selectedComplaint,
+          comments: [...(selectedComplaint.comments || []), commentObj]
+        });
+      }
+
       setNewComment('');
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -252,7 +262,7 @@ function ViewComplaints() {
     switch (status) {
       case 'resolved': return 'var(--success-color)';
       case 'in_progress': return 'var(--warning-color)';
-      case 'new': 
+      case 'new':
       default: return 'var(--info-color)';
     }
   };
@@ -286,8 +296,8 @@ function ViewComplaints() {
     setSelectedComplaint(null);
   };
 
-  const filteredComplaints = selectedCategory === 'All' 
-    ? complaints 
+  const filteredComplaints = selectedCategory === 'All'
+    ? complaints
     : complaints.filter(c => c.category === selectedCategory);
 
   return (
@@ -304,14 +314,14 @@ function ViewComplaints() {
 
       <div className="dashboard-controls">
         <div className="analytics-toggle">
-          <button 
+          <button
             onClick={() => setShowAnalytics(!showAnalytics)}
             className={`toggle-button ${showAnalytics ? "active" : ""}`}
           >
             {showAnalytics ? "Hide Analytics" : "Show Analytics"}
           </button>
         </div>
-        
+
         <div className="user-filter">
           <label className="checkbox-container">
             <input
@@ -324,7 +334,7 @@ function ViewComplaints() {
           </label>
         </div>
       </div>
-      
+
       {showAnalytics && (
         <div className="analytics-section">
           <h2>Complaints Analytics</h2>
@@ -352,9 +362,9 @@ function ViewComplaints() {
                 <div key={category} className="category-bar-container">
                   <div className="category-name">{category}</div>
                   <div className="category-bar-wrapper">
-                    <div 
-                      className="category-bar" 
-                      style={{width: `${(count / analytics.totalComplaints) * 100}%`}}
+                    <div
+                      className="category-bar"
+                      style={{ width: `${(count / analytics.totalComplaints) * 100}%` }}
                     ></div>
                   </div>
                   <div className="category-count">{count}</div>
@@ -364,7 +374,7 @@ function ViewComplaints() {
           </div>
         </div>
       )}
-      
+
       {priorityComplaints.length > 0 && (
         <div className="priority-complaints-section">
           <h2>High Priority Complaints</h2>
@@ -381,12 +391,12 @@ function ViewComplaints() {
                   <span className="status-badge" style={{
                     backgroundColor: getStatusColor(complaint.status)
                   }}>
-                    {complaint.status === 'new' ? 'New' : 
-                     complaint.status === 'in_progress' ? 'In Progress' : 
-                     'Resolved'}
+                    {complaint.status === 'new' ? 'New' :
+                      complaint.status === 'in_progress' ? 'In Progress' :
+                        'Resolved'}
                   </span>
                   <div className="priority-actions">
-                    <button 
+                    <button
                       onClick={() => handleVote(complaint._id, 'upvote')}
                       className={`vote-button ${complaint.userVoted ? 'voted' : ''}`}
                       disabled={complaint.userVoted}
@@ -454,7 +464,7 @@ function ViewComplaints() {
             </select>
           </div>
         </div>
-        
+
         {selectedComplaint && (
           <div className="view-complaint-section">
             <button className="view-complaint-button" onClick={closeComplaintView}>
@@ -489,22 +499,25 @@ function ViewComplaints() {
                 <div className="complaint-header">
                   <div className="complaint-category" style={{
                     backgroundColor: complaint.category === 'Water Issues' ? '#2196F3' :
-                                    complaint.category === 'Road Issues' ? '#F44336' :
-                                    complaint.category === 'Garbage Issues' ? '#4CAF50' :
-                                    complaint.category === 'Electricity' ? '#FF9800' :
-                                    complaint.category === 'Drainage Issues' ? '#9C27B0' : '#607D8B'
+                      complaint.category === 'Road Issues' ? '#F44336' :
+                        complaint.category === 'Garbage Issues' ? '#4CAF50' :
+                          complaint.category === 'Electricity' ? '#FF9800' :
+                            complaint.category === 'Drainage Issues' ? '#9C27B0' : '#607D8B'
                   }}>
                     {complaint.category}
                   </div>
                   <div className="complaint-status" style={{
                     backgroundColor: getStatusColor(complaint.status)
                   }}>
-                    {complaint.status === 'new' ? 'New' : 
-                     complaint.status === 'in_progress' ? 'In Progress' : 
-                     'Resolved'}
+                    {complaint.status === 'new' ? 'New' :
+                      complaint.status === 'in_progress' ? 'In Progress' :
+                        'Resolved'}
                   </div>
+                  {complaint.is_potential_duplicate && (
+                    <div className="duplicate-badge-mini" title="Potential duplicate detected">⚠️ DUPLICATE</div>
+                  )}
                 </div>
-                
+
                 <div className="complaint-summary">
                   <h3>{complaint.complaint.substring(0, 60)}...</h3>
                   <p>{complaint.complaint.substring(0, 120)}...</p>
@@ -520,22 +533,22 @@ function ViewComplaints() {
               </div>
             ))}
           </div>
-          
+
           {totalPages > 1 && (
             <div className="pagination">
-              <button 
+              <button
                 className="pagination-button"
                 onClick={() => fetchComplaints(currentPage - 1)}
                 disabled={currentPage === 1}
               >
                 Previous
               </button>
-              
+
               <span className="page-info">
                 Page {currentPage} of {totalPages}
               </span>
-              
-              <button 
+
+              <button
                 className="pagination-button"
                 onClick={() => fetchComplaints(currentPage + 1)}
                 disabled={currentPage === totalPages}
@@ -544,7 +557,7 @@ function ViewComplaints() {
               </button>
             </div>
           )}
-          
+
           {selectedComplaint && (
             <div className="modal-overlay" onClick={() => setSelectedComplaint(null)}>
               <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -552,39 +565,59 @@ function ViewComplaints() {
                 <div className="modal-header">
                   <div className="complaint-category" style={{
                     backgroundColor: selectedComplaint.category === 'Water Issues' ? '#2196F3' :
-                                    selectedComplaint.category === 'Road Issues' ? '#F44336' :
-                                    selectedComplaint.category === 'Garbage Issues' ? '#4CAF50' :
-                                    selectedComplaint.category === 'Electricity' ? '#FF9800' :
-                                    selectedComplaint.category === 'Drainage Issues' ? '#9C27B0' : '#607D8B'
+                      selectedComplaint.category === 'Road Issues' ? '#F44336' :
+                        selectedComplaint.category === 'Garbage Issues' ? '#4CAF50' :
+                          selectedComplaint.category === 'Electricity' ? '#FF9800' :
+                            selectedComplaint.category === 'Drainage Issues' ? '#9C27B0' : '#607D8B'
                   }}>
                     {selectedComplaint.category}
                   </div>
                   <div className="complaint-status" style={{
                     backgroundColor: getStatusColor(selectedComplaint.status)
                   }}>
-                    {selectedComplaint.status === 'new' ? 'New' : 
-                     selectedComplaint.status === 'in_progress' ? 'In Progress' : 
-                     'Resolved'}
+                    {selectedComplaint.status === 'new' ? 'New' :
+                      selectedComplaint.status === 'in_progress' ? 'In Progress' :
+                        'Resolved'}
                   </div>
                 </div>
-                
+
                 <div className="modal-body">
                   <h2>{selectedComplaint.complaint}</h2>
-                  
+
+                  {/* Enhanced AI Info Section */}
+                  <div className="modal-ai-info">
+                    {selectedComplaint.priority_reasons && selectedComplaint.priority_reasons.length > 0 && (
+                      <div className="priority-reasons-box">
+                        <h4>AI Priority Insights</h4>
+                        <ul>
+                          {selectedComplaint.priority_reasons.map((reason, idx) => (
+                            <li key={idx}>✨ {reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {selectedComplaint.is_potential_duplicate && (
+                      <div className="duplicate-alert-box">
+                        ⚠️ This complaint was flagged as a potential duplicate.
+                      </div>
+                    )}
+                  </div>
+
                   {selectedComplaint.has_photo && (
                     <div className="complaint-image">
-                      <img 
-                        src={`${API_URL}/photos/${selectedComplaint.photo_path}`} 
-                        alt="Complaint evidence" 
+                      <img
+                        src={`${API_URL}/photos/${selectedComplaint.photo_path}`}
+                        alt="Complaint evidence"
                         onClick={() => window.open(`${API_URL}/photos/${selectedComplaint.photo_path}`, '_blank')}
                       />
                     </div>
                   )}
-                  
+
                   {selectedComplaint.location && (
                     <div className="complaint-location">
                       <span className="location-icon">📍</span> {selectedComplaint.location}
-                      <button 
+                      <button
                         className="map-button"
                         onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedComplaint.location)}`, '_blank')}
                       >
@@ -592,12 +625,27 @@ function ViewComplaints() {
                       </button>
                     </div>
                   )}
-                  
+
+                  <div className="modal-qr-section">
+                    <div className="qr-box">
+                      <QRCodeCanvas
+                        value={selectedComplaint._id}
+                        size={120}
+                        level={"M"}
+                        includeMargin={true}
+                      />
+                    </div>
+                    <div className="qr-info">
+                      <p>Scan to track on mobile</p>
+                      <small>Complaint ID: {selectedComplaint._id.substring(0, 8)}...</small>
+                    </div>
+                  </div>
+
                   {/* Voting section */}
                   <div className="voting-section">
                     <h3>Vote for this complaint</h3>
                     <div className="vote-buttons">
-                      <button 
+                      <button
                         onClick={() => handleVote(selectedComplaint._id, 'upvote')}
                         className={`vote-button ${selectedComplaint.userVoted ? 'voted' : ''}`}
                         disabled={selectedComplaint.userVoted}
@@ -606,11 +654,11 @@ function ViewComplaints() {
                       </button>
                     </div>
                   </div>
-                  
+
                   {/* Comments section */}
                   <div className="comments-section">
                     <h3>Comments ({selectedComplaint.comments?.length || 0})</h3>
-                    
+
                     {selectedComplaint.comments && selectedComplaint.comments.length > 0 ? (
                       <div className="comments-list">
                         {selectedComplaint.comments.map((comment, idx) => (
@@ -628,7 +676,7 @@ function ViewComplaints() {
                     ) : (
                       <p className="no-comments">No comments yet. Be the first to comment!</p>
                     )}
-                    
+
                     {/* Display admin notes if they exist */}
                     {selectedComplaint.admin_notes && selectedComplaint.admin_notes.length > 0 && (
                       <div className="admin-notes-section">
@@ -646,7 +694,7 @@ function ViewComplaints() {
                         ))}
                       </div>
                     )}
-                    
+
                     <div className="add-comment">
                       <textarea
                         placeholder="Add your comment..."
@@ -663,8 +711,9 @@ function ViewComplaints() {
             </div>
           )}
         </>
-      )}
-    </div>
+      )
+      }
+    </div >
   );
 }
 

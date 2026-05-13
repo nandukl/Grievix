@@ -1,1020 +1,204 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import './AdminDashboard.css';
 
-function AdminDashboard() {
-  const [complaints, setComplaints] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selectedComplaint, setSelectedComplaint] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [noteText, setNoteText] = useState('');
-  const [recentActivity, setRecentActivity] = useState([]);
-  const [showPriorityAlert, setShowPriorityAlert] = useState(false);
-  const [priorityComplaints, setPriorityComplaints] = useState([]);
-  const [departments] = useState([
-    "Water Department",
-    "Road Department",
-    "Sanitation Department",
-    "Electricity Department",
-    "Drainage Department",
-    "General Department"
-  ]);
-  const navigate = useNavigate();
+// Modular Components
+import Sidebar from './admin/components/Sidebar';
+import DetailsModal from './admin/components/DetailsModal';
 
-  const API_URL = 'http://localhost:5000';
-  
-  const handleLogout = () => {
-    localStorage.removeItem('isLoggedIn');
-    localStorage.removeItem('userEmail');
-    localStorage.removeItem('userRole');
-    navigate('/login');
-  };
-  
-  useEffect(() => {
-    // Check if user is logged in and is admin
-    const isLoggedIn = localStorage.getItem('isLoggedIn');
-    const userRole = localStorage.getItem('userRole');
-    
-    if (!isLoggedIn || userRole !== 'admin') {
-      navigate('/login');
-    }
-    
-    // Check for priority complaints from login
-    const priorityComplaintsData = localStorage.getItem("priorityComplaints");
-    if (priorityComplaintsData) {
-      const priorityData = JSON.parse(priorityComplaintsData);
-      if (priorityData.length > 0) {
-        setPriorityComplaints(priorityData);
-        setShowPriorityAlert(true);
-        // Clear the localStorage item so the alert doesn't show again
-        localStorage.removeItem("priorityComplaints");
-      }
+// Pages
+import DashboardOverview from './admin/pages/DashboardOverview';
+import ComplaintManagement from './admin/pages/ComplaintManagement';
+import EmergencyPanel from './admin/pages/EmergencyPanel';
+import AnalyticsPage from './admin/pages/AnalyticsPage';
+import DepartmentPerformance from './admin/pages/DepartmentPerformance';
+
+const API_URL = "http://localhost:5000";
+
+const AdminDashboard = () => {
+  const navigate = useNavigate();
+  const [view, setView] = useState('overview');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(localStorage.getItem('adminTheme') === 'dark');
+
+  // Data State
+  const [complaints, setComplaints] = useState([]);
+  const [advancedAnalytics, setAdvancedAnalytics] = useState({});
+  const [deptPerformance, setDeptPerformance] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [selectedComplaint, setSelectedComplaint] = useState(null);
+
+  const fetchAllData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('token');
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+      const [complaintsRes, analyticsRes, performanceRes, activityRes] = await Promise.all([
+        axios.get(`${API_URL}/get_complaints`, { headers }),
+        axios.get(`${API_URL}/admin_analytics`, { headers }),
+        axios.get(`${API_URL}/department_performance`, { headers }),
+        axios.get(`${API_URL}/get_recent_activity`, { headers })
+      ]);
+
+      setComplaints(complaintsRes.data.complaints || []);
+      setAdvancedAnalytics(analyticsRes.data);
+      setDeptPerformance(performanceRes.data);
+      const acts = Array.isArray(activityRes.data) ? activityRes.data : [];
+      setNotifications(acts);
+      setLoading(false);
+    } catch (err) {
+      console.error('Data Sync Failure:', err);
+      // If unauthorized, redirect to login
+      if (err.response?.status === 401) navigate('/login');
+      setLoading(false);
     }
   }, [navigate]);
 
   useEffect(() => {
-    fetchComplaints();
-  }, [statusFilter]);
-
-  const fetchComplaints = async () => {
-    setLoading(true);
-    try {
-      const response = await axios.get(`${API_URL}/get_complaints`, {
-        params: {
-          status: statusFilter !== 'all' ? statusFilter : undefined,
-          sort: 'highest_priority',
-          per_page: 20,
-          include_resolved: 'true'
-        },
-        timeout: 10000
-      });
-      
-      if (response.data && response.data.complaints) {
-        setComplaints(response.data.complaints);
-      } else {
-        setComplaints([]);
-      }
-    } catch (err) {
-      console.error('Error fetching complaints:', err);
-      if (err.response) {
-        setError(`Server error: ${err.response.status} - ${err.response.statusText}`);
-      } else if (err.request) {
-        setError('No response from server. Please check your connection and try again.');
-      } else {
-        setError('Failed to load complaints. Please try again later.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateComplaintStatus = async (complaintId, newStatus) => {
-    try {
-      await axios.post(`${API_URL}/update_status`, {
-        complaintId,
-        status: newStatus
-      });
-      
-      // Update local state
-      setComplaints(complaints.map(complaint => {
-        if (complaint._id === complaintId) {
-          return { ...complaint, status: newStatus };
-        }
-        return complaint;
-      }));
-      
-      // If we're updating the selected complaint, update that too
-      if (selectedComplaint && selectedComplaint._id === complaintId) {
-        setSelectedComplaint({ ...selectedComplaint, status: newStatus });
-      }
-      
-      // Refresh analytics on the public view page by calling the refresh endpoint
-      try {
-        await axios.get(`${API_URL}/get_analytics`);
-      } catch (analyticsErr) {
-        console.error('Error refreshing analytics:', analyticsErr);
-      }
-      
-      // Refresh recent activity
-      fetchRecentActivity();
-      
-    } catch (error) {
-      console.error('Error updating status:', error);
-      alert('Failed to update complaint status. Please try again.');
-    }
-  };
-
-  const assignToDepartment = async (complaintId, department) => {
-    try {
-      await axios.post(`${API_URL}/assign_department`, {
-        complaintId,
-        department
-      });
-      
-      // Update local state
-      setComplaints(complaints.map(complaint => {
-        if (complaint._id === complaintId) {
-          return { ...complaint, assigned_department: department };
-        }
-        return complaint;
-      }));
-      
-      // If we're updating the selected complaint, update that too
-      if (selectedComplaint && selectedComplaint._id === complaintId) {
-        setSelectedComplaint({ ...selectedComplaint, assigned_department: department });
-      }
-      
-      // Refresh recent activity
-      fetchRecentActivity();
-      
-    } catch (error) {
-      console.error('Error assigning department:', error);
-      alert('Failed to assign department. Please try again.');
-    }
-  };
-
-  const saveAdminNote = async (complaintId, noteText) => {
-    try {
-      await axios.post(`${API_URL}/save_admin_note`, {
-        complaintId,
-        noteText
-      });
-      
-      // Update local state
-      setComplaints(complaints.map(complaint => {
-        if (complaint._id === complaintId) {
-          const newNote = {
-            text: noteText,
-            timestamp: new Date().toISOString(),
-            admin: "Administrator"
-          };
-          return { 
-            ...complaint, 
-            admin_notes: [...(complaint.admin_notes || []), newNote]
-          };
-        }
-        return complaint;
-      }));
-      
-      // If we're updating the selected complaint, update that too
-      if (selectedComplaint && selectedComplaint._id === complaintId) {
-        const newNote = {
-          text: noteText,
-          timestamp: new Date().toISOString(),
-          admin: "Administrator"
-        };
-        setSelectedComplaint({ 
-          ...selectedComplaint, 
-          admin_notes: [...(selectedComplaint.admin_notes || []), newNote]
-        });
-      }
-      
-      alert('Admin note saved successfully!');
-      setNoteText(''); // Clear the note text field
-      
-      // Refresh recent activity
-      fetchRecentActivity();
-      
-    } catch (error) {
-      console.error('Error saving admin note:', error);
-      alert('Failed to save admin note. Please try again.');
-    }
-  };
-
-  const handleComplaintSelect = (complaint) => {
-    setSelectedComplaint(complaint);
-  };
-
-  const filteredComplaints = complaints.filter(complaint => {
-    // First apply status filter
-    if (statusFilter !== 'all' && complaint.status !== statusFilter) {
-      return false;
-    }
-    
-    // Then apply search filter if there is a search query
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      return (
-        complaint.complaint.toLowerCase().includes(query) ||
-        complaint.category.toLowerCase().includes(query) ||
-        (complaint.location && complaint.location.toLowerCase().includes(query)) ||
-        (complaint.assigned_department && complaint.assigned_department.toLowerCase().includes(query))
-      );
-    }
-    
-    return true;
-  });
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'resolved': return 'var(--success-color)';
-      case 'in_progress': return 'var(--warning-color)';
-      case 'new': 
-      default: return 'var(--info-color)';
-    }
-  };
-
-  const getCategoryColor = (category) => {
-    switch (category) {
-      case 'Water Issues': return '#2196F3';
-      case 'Road Issues': return '#F44336';
-      case 'Garbage Issues': return '#4CAF50';
-      case 'Electricity': return '#FF9800';
-      case 'Drainage Issues': return '#9C27B0';
-      default: return '#607D8B';
-    }
-  };
-
-  const [analytics, setAnalytics] = useState({
-    total: 0,
-    resolved: 0,
-    inProgress: 0,
-    new: 0,
-    categoryCounts: {},
-    departmentCounts: {}
-  });
-
-  // Fetch analytics data
-  const fetchAnalytics = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/get_analytics`, { timeout: 5000 });
-      if (response.data) {
-        setAnalytics({
-          total: response.data.total_complaints || 0,
-          resolved: response.data.resolved_count || 0,
-          inProgress: 0, // We'll calculate this from the resolved and total
-          new: 0, // We'll calculate this from the resolved and total
-          categoryCounts: response.data.category_counts || {},
-          departmentCounts: {} // This would need to be calculated separately
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
-    }
-  };
-
-  // Calculate analytics data from complaints (for department counts)
-  const calculateLocalAnalytics = () => {
-    const total = complaints.length;
-    const resolved = complaints.filter(c => c.status === 'resolved').length;
-    const inProgress = complaints.filter(c => c.status === 'in_progress').length;
-    const newComplaints = complaints.filter(c => c.status === 'new').length;
-    
-    // Category distribution
-    const categoryCounts = {};
-    complaints.forEach(complaint => {
-      categoryCounts[complaint.category] = (categoryCounts[complaint.category] || 0) + 1;
-    });
-    
-    // Department distribution
-    const departmentCounts = {};
-    complaints.forEach(complaint => {
-      const dept = complaint.assigned_department || 'Unassigned';
-      departmentCounts[dept] = (departmentCounts[dept] || 0) + 1;
-    });
-    
-    return {
-      total,
-      resolved,
-      inProgress,
-      new: newComplaints,
-      categoryCounts,
-      departmentCounts
-    };
-  };
-
-  const localAnalytics = calculateLocalAnalytics();
-
-  // Fetch analytics when component mounts
-  useEffect(() => {
-    fetchAnalytics();
-  }, []);
-
-  // Render status chart
-  const renderStatusChart = () => {
-    const newCount = analytics.new;
-    const inProgress = analytics.inProgress;
-    const resolved = analytics.resolved;
-    const total = newCount + inProgress + resolved;
-    
-    if (total === 0) return null;
-    
-    return (
-      <div className="chart-container">
-        <h3>Complaint Status Distribution</h3>
-        <div className="chart-bars">
-          <div className="chart-bar">
-            <div className="bar-label">New</div>
-            <div className="bar-container">
-              <div 
-                className="bar" 
-                style={{ 
-                  width: `${(newCount / total) * 100}%`,
-                  backgroundColor: 'var(--info-color)'
-                }}
-              ></div>
-            </div>
-            <div className="bar-value">{newCount}</div>
-          </div>
-          <div className="chart-bar">
-            <div className="bar-label">In Progress</div>
-            <div className="bar-container">
-              <div 
-                className="bar" 
-                style={{ 
-                  width: `${(inProgress / total) * 100}%`,
-                  backgroundColor: 'var(--warning-color)'
-                }}
-              ></div>
-            </div>
-            <div className="bar-value">{inProgress}</div>
-          </div>
-          <div className="chart-bar">
-            <div className="bar-label">Resolved</div>
-            <div className="bar-container">
-              <div 
-                className="bar" 
-                style={{ 
-                  width: `${(resolved / total) * 100}%`,
-                  backgroundColor: 'var(--success-color)'
-                }}
-              ></div>
-            </div>
-            <div className="bar-value">{resolved}</div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Render category chart
-  const renderCategoryChart = () => {
-    const categories = Object.keys(analytics.categoryCounts);
-    
-    if (categories.length === 0) return null;
-    
-    const maxCount = Math.max(...Object.values(analytics.categoryCounts));
-    
-    return (
-      <div className="chart-container">
-        <h3>Complaints by Category</h3>
-        <div className="chart-bars">
-          {categories.map(category => (
-            <div className="chart-bar" key={category}>
-              <div className="bar-label">{category}</div>
-              <div className="bar-container">
-                <div 
-                  className="bar" 
-                  style={{ 
-                    width: `${(analytics.categoryCounts[category] / maxCount) * 100}%`,
-                    backgroundColor: getCategoryColor(category)
-                  }}
-                ></div>
-              </div>
-              <div className="bar-value">{analytics.categoryCounts[category]}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  // Render department chart
-  const renderDepartmentChart = () => {
-    const departments = Object.keys(analytics.departmentCounts);
-    
-    if (departments.length === 0) return null;
-    
-    const maxCount = Math.max(...Object.values(analytics.departmentCounts));
-    
-    return (
-      <div className="chart-container">
-        <h3>Complaints by Department</h3>
-        <div className="chart-bars">
-          {departments.map(dept => (
-            <div className="chart-bar" key={dept}>
-              <div className="bar-label">{dept}</div>
-              <div className="bar-container">
-                <div 
-                  className="bar" 
-                  style={{ 
-                    width: `${(analytics.departmentCounts[dept] / maxCount) * 100}%`,
-                    backgroundColor: `hsl(${(analytics.departmentCounts[dept] * 10)}, 70%, 50%)`
-                  }}
-                ></div>
-              </div>
-              <div className="bar-value">{analytics.departmentCounts[dept]}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const autoAssignDepartment = (complaintId, category) => {
-    let department = "General Department";
-    
-    // Auto-assign based on category
-    if (category.includes("Water")) {
-      department = "Water Department";
-    } else if (category.includes("Road")) {
-      department = "Road Department";
-    } else if (category.includes("Garbage")) {
-      department = "Sanitation Department";
-    } else if (category.includes("Electricity")) {
-      department = "Electricity Department";
-    } else if (category.includes("Drainage")) {
-      department = "Drainage Department";
-    }
-    
-    assignToDepartment(complaintId, department);
-    alert(`Complaint automatically assigned to ${department}`);
-    
-    // Refresh recent activity
-    fetchRecentActivity();
-  };
-
-  // Add a function to refresh analytics
-  const refreshAnalytics = async () => {
-    try {
-      // In a real implementation, you might want to broadcast this to other components
-      // For now, we'll just log that analytics were refreshed
-      console.log('Analytics refreshed');
-    } catch (error) {
-      console.error('Error refreshing analytics:', error);
-    }
-  };
-
-  // Fetch recent activity
-  const fetchRecentActivity = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/get_recent_activity`, { timeout: 5000 });
-      if (response.data) {
-        // Transform the data to match our UI format
-        const activity = response.data.map(item => ({
-          id: item._id,
-          icon: getActivityIcon(item.type),
-          message: item.message,
-          time: item.time_ago || 'Recently'
-        }));
-        setRecentActivity(activity);
-      }
-    } catch (error) {
-      console.error('Error fetching recent activity:', error);
-      // Fallback to static data if API fails
-      const fallbackActivity = [
-        {
-          id: 1,
-          icon: '🆕',
-          message: 'New complaint submitted in Water Issues category',
-          time: '2 minutes ago'
-        },
-        {
-          id: 2,
-          icon: '✅',
-          message: 'Complaint #ABC123 marked as resolved',
-          time: '15 minutes ago'
-        },
-        {
-          id: 3,
-          icon: '🏢',
-          message: '5 complaints auto-assigned to Road Department',
-          time: '1 hour ago'
-        }
-      ];
-      setRecentActivity(fallbackActivity);
-    }
-  };
-
-  // Get appropriate icon for activity type
-  const getActivityIcon = (type) => {
-    switch (type) {
-      case 'new_complaint': return '🆕';
-      case 'status_update': return '✅';
-      case 'department_assignment': return '🏢';
-      case 'admin_note': return '📝';
-      default: return '🕒';
-    }
-  };
-
-  // Fetch recent activity when component mounts
-  useEffect(() => {
-    fetchRecentActivity();
-  }, []);
-
-  // Periodically check for new priority complaints
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const response = await axios.get(`${API_URL}/get_recent_activity`, { timeout: 5000 });
-        if (response.data) {
-          // Check if there are any new priority complaints
-          const priorityActivities = response.data.filter(activity => 
-            activity.type === "priority_complaint"
-          );
-          
-          // Check if we have any new priority complaints that weren't shown before
-          if (priorityActivities.length > 0) {
-            // Get the latest timestamp from current priority complaints
-            const latestTimestamp = priorityComplaints.length > 0 
-              ? Math.max(...priorityComplaints.map(c => new Date(c.timestamp).getTime()))
-              : 0;
-            
-            // Check if there are new priority complaints
-            const newPriorityActivities = priorityActivities.filter(activity => {
-              const activityTime = new Date(activity.timestamp).getTime();
-              return activityTime > latestTimestamp;
-            });
-            
-            if (newPriorityActivities.length > 0) {
-              setPriorityComplaints(prev => [...prev, ...newPriorityActivities]);
-              // Only show alert if it's not already visible
-              if (!showPriorityAlert) {
-                setShowPriorityAlert(true);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error checking for new priority complaints:', error);
-      }
-    }, 30000); // Check every 30 seconds
-    
+    fetchAllData();
+    // Refresh every 2 minutes
+    const interval = setInterval(fetchAllData, 120000);
     return () => clearInterval(interval);
-  }, [priorityComplaints, showPriorityAlert]);
+  }, [fetchAllData]);
+
+  const handleUpdateStatus = async (id, status, adminNote = null) => {
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post(`${API_URL}/update_status`, {
+        complaintId: id,
+        status,
+        adminNote // Backend needs to support this but we send it anyway
+      }, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      setSelectedComplaint(null);
+      fetchAllData();
+    } catch (err) {
+      alert('Operation failed. Connection to governance server lost.');
+    }
+  };
+
+  const handleAssignDept = async (id, department) => {
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post(`${API_URL}/assign_department`, {
+        complaintId: id,
+        department
+      }, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      fetchAllData();
+    } catch (err) {
+      alert('Department assignment failed.');
+    }
+  };
+
+  const onLogout = () => {
+    localStorage.clear();
+    navigate('/login');
+  };
+
+  // UI Theme toggle
+  useEffect(() => {
+    document.body.className = isDarkMode ? 'admin-dark-theme' : 'admin-light-theme';
+    localStorage.setItem('adminTheme', isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
 
   return (
-    <div className="admin-dashboard">
-      <header className="dashboard-header">
-        <div className="header-content">
-          <h1>🔧 Grievix Admin Dashboard</h1>
-          <p className="header-subtitle">Manage and track all municipal complaints</p>
-        </div>
-        <div className="header-actions">
-          <button className="logout-btn" onClick={handleLogout}>
-            <span className="button-icon">🚪</span>
-            Logout
-          </button>
-        </div>
-      </header>
-      
-      {/* Priority Complaint Alert Popup */}
-      {showPriorityAlert && (
-        <div className="priority-alert-overlay">
-          <div className="priority-alert-popup">
-            <div className="alert-header">
-              <h2>🚨 HIGH PRIORITY COMPLAINTS</h2>
-              <button 
-                className="close-alert" 
-                onClick={() => setShowPriorityAlert(false)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="alert-content">
-              <p>You have {priorityComplaints.length} high priority complaint(s) that require immediate attention:</p>
-              <ul>
-                {priorityComplaints.map((complaint, index) => (
-                  <li key={index}>
-                    <strong>{complaint.message}</strong>
-                    <br />
-                    <small>Reported {complaint.time_ago || 'recently'}</small>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="alert-actions">
-              <button 
-                className="acknowledge-btn" 
-                onClick={() => setShowPriorityAlert(false)}
-              >
-                Acknowledge
-              </button>
-            </div>
+    <div className={`admin-app-container ${isSidebarCollapsed ? 'sidebar-min' : ''}`}>
+      <Sidebar
+        activeView={view}
+        setView={setView}
+        isCollapsed={isSidebarCollapsed}
+        toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        onLogout={onLogout}
+      />
+
+      <main className="admin-main-view">
+        <header className="admin-top-bar">
+          <div className="system-status">
+            <span className="pulse-dot"></span> System Live: Municipal Grid Online
           </div>
-        </div>
-      )}
-      
-      <div className="admin-tabs">
-        <button 
-          className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`} 
-          onClick={() => setActiveTab('dashboard')}
-        >
-          📊 Dashboard
-        </button>
-        <button 
-          className={`tab-button ${activeTab === 'assign' ? 'active' : ''}`} 
-          onClick={() => setActiveTab('assign')}
-        >
-          🏢 Assign Department
-        </button>
-      </div>
-
-      <div className="dashboard-content">
-        <div className="dashboard-sidebar">
-          <div className="search-filter">
-            <div className="search-container">
-              <input
-                type="text"
-                placeholder="Search complaints..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <button className="search-icon">🔍</button>
-            </div>
-            <div className="status-filters">
-              <button 
-                className={`filter-button ${statusFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setStatusFilter('all')}
+          <div className="top-bar-actions">
+            <div className="notifications-wrapper" onMouseLeave={() => setShowNotifications(false)}>
+              <button
+                className="notification-btn"
+                onClick={() => setShowNotifications(!showNotifications)}
               >
-                All
+                🔔 {notifications.length > 0 && <span className="notification-badge">{notifications.length}</span>}
               </button>
-              <button 
-                className={`filter-button ${statusFilter === 'new' ? 'active' : ''}`}
-                onClick={() => setStatusFilter('new')}
-              >
-                New
-              </button>
-              <button 
-                className={`filter-button ${statusFilter === 'in_progress' ? 'active' : ''}`}
-                onClick={() => setStatusFilter('in_progress')}
-              >
-                In Progress
-              </button>
-              <button 
-                className={`filter-button ${statusFilter === 'resolved' ? 'active' : ''}`}
-                onClick={() => setStatusFilter('resolved')}
-              >
-                Resolved
-              </button>
-            </div>
-          </div>
-
-          {activeTab === 'dashboard' && (
-            <div className="complaints-list">
-              <h2>📋 Prioritized Complaints</h2>
-              
-              {loading ? (
-                <div className="loading-container">
-                  <div className="loading-spinner"></div>
-                  <p>Loading complaints...</p>
-                </div>
-              ) : error ? (
-                <div className="error-message">
-                  <div className="error-icon">⚠️</div>
-                  <p>{error}</p>
-                </div>
-              ) : filteredComplaints.length === 0 ? (
-                <div className="no-results">
-                  <div className="no-results-icon">📭</div>
-                  <p>No complaints found matching your criteria</p>
-                </div>
-              ) : (
-                filteredComplaints.map(complaint => (
-                  <div 
-                    key={complaint._id} 
-                    className={`complaint-item ${selectedComplaint && selectedComplaint._id === complaint._id ? 'selected' : ''}`}
-                    onClick={() => handleComplaintSelect(complaint)}
-                  >
-                    <div className="complaint-header">
-                      <div 
-                        className="complaint-category" 
-                        style={{ backgroundColor: getCategoryColor(complaint.category) }}
-                      >
-                        {complaint.category}
-                      </div>
-                      <div 
-                        className="complaint-status"
-                        style={{ backgroundColor: getStatusColor(complaint.status) }}
-                      >
-                        {complaint.status === 'new' ? 'New' : 
-                         complaint.status === 'in_progress' ? 'In Progress' : 
-                         'Resolved'}
-                      </div>
-                    </div>
-                    <div className="complaint-preview">
-                      <p>{complaint.complaint.substring(0, 100)}...</p>
-                    </div>
-                    <div className="complaint-meta">
-                      <span className="priority-score">
-                        ⭐ {complaint.priority_score || 5}
-                      </span>
-                      <span className="votes">
-                        👍 {complaint.votes || 0}
-                      </span>
-                    </div>
-                    {complaint.assigned_department && (
-                      <div className="assigned-department">
-                        🏢 {complaint.assigned_department}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-          
-          {activeTab === 'assign' && (
-            <div className="assign-department-sidebar">
-              <h2>🏢 Unassigned Complaints</h2>
-              {loading ? (
-                <div className="loading-container">
-                  <div className="loading-spinner"></div>
-                  <p>Loading complaints...</p>
-                </div>
-              ) : error ? (
-                <div className="error-message">
-                  <div className="error-icon">⚠️</div>
-                  <p>{error}</p>
-                </div>
-              ) : filteredComplaints.filter(c => !c.assigned_department).length === 0 ? (
-                <div className="no-results">
-                  <div className="no-results-icon">✅</div>
-                  <p>All complaints have been assigned to departments</p>
-                </div>
-              ) : (
-                filteredComplaints.filter(c => !c.assigned_department).map(complaint => (
-                  <div 
-                    key={complaint._id} 
-                    className="complaint-item"
-                    onClick={() => handleComplaintSelect(complaint)}
-                  >
-                    <div className="complaint-header">
-                      <div 
-                        className="complaint-category" 
-                        style={{ backgroundColor: getCategoryColor(complaint.category) }}
-                      >
-                        {complaint.category}
-                      </div>
-                    </div>
-                    <div className="complaint-preview">
-                      <p>{complaint.complaint.substring(0, 100)}...</p>
-                    </div>
-                    <button 
-                      className="auto-assign-button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        autoAssignDepartment(complaint._id, complaint.category);
-                      }}
-                    >
-                      Auto-Assign
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="dashboard-main">
-          {selectedComplaint ? (
-            <div className="complaint-detail">
-              <div className="detail-header">
-                <div className="header-info">
-                  <h2>📄 Complaint Details</h2>
-                  <p className="complaint-id">ID: {selectedComplaint._id}</p>
-                </div>
-                <div className="detail-actions">
-                  <div className="action-group">
-                    <label>Status:</label>
-                    <select 
-                      value={selectedComplaint.status || 'new'}
-                      onChange={(e) => updateComplaintStatus(selectedComplaint._id, e.target.value)}
-                    >
-                      <option value="new">New</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="resolved">Resolved</option>
-                    </select>
-                  </div>
-                  
-                  <div className="action-group">
-                    <label>Department:</label>
-                    <select 
-                      value={selectedComplaint.assigned_department || ''}
-                      onChange={(e) => assignToDepartment(selectedComplaint._id, e.target.value)}
-                    >
-                      <option value="">Assign Department</option>
-                      {departments.map(dept => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="detail-content">
-                <div className="detail-section">
-                  <h3>🏷️ Category</h3>
-                  <p className="category-badge" style={{ backgroundColor: getCategoryColor(selectedComplaint.category) }}>
-                    {selectedComplaint.category}
-                  </p>
-                </div>
-                
-                <div className="detail-section">
-                  <h3>📝 Description</h3>
-                  <p className="complaint-description">{selectedComplaint.complaint}</p>
-                </div>
-                
-                {selectedComplaint.has_photo && (
-                  <div className="detail-section">
-                    <h3>📸 Photo Evidence</h3>
-                    <div className="detail-photo">
-                      <img 
-                        src={`${API_URL}/photos/${selectedComplaint.photo_path}`} 
-                        alt="Complaint evidence" 
-                        onClick={() => window.open(`${API_URL}/photos/${selectedComplaint.photo_path}`, '_blank')}
-                      />
-                    </div>
-                  </div>
-                )}
-                
-                {selectedComplaint.location && (
-                  <div className="detail-section">
-                    <h3>📍 Location</h3>
-                    <p className="location-text">{selectedComplaint.location}</p>
-                    <div className="map-placeholder">
-                      <p>🗺️ Map view would be displayed here</p>
-                      <button 
-                        className="map-button"
-                        onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedComplaint.location)}`, '_blank')}
-                      >
-                        View on Google Maps
-                      </button>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="detail-section">
-                  <h3>📊 Metadata</h3>
-                  <div className="metadata-grid">
-                    <div className="metadata-item">
-                      <span className="metadata-label">Submitted</span>
-                      <span className="metadata-value">
-                        {new Date(selectedComplaint.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="metadata-item">
-                      <span className="metadata-label">Priority Score</span>
-                      <span className="metadata-value">{selectedComplaint.priority_score || 5}/10</span>
-                    </div>
-                    <div className="metadata-item">
-                      <span className="metadata-label">Votes</span>
-                      <span className="metadata-value">{selectedComplaint.votes || 0}</span>
-                    </div>
-                    <div className="metadata-item">
-                      <span className="metadata-label">Prediction Source</span>
-                      <span className="metadata-value">{selectedComplaint.prediction_source || 'AI Model'}</span>
-                    </div>
-                    <div className="metadata-item">
-                      <span className="metadata-label">Assigned Department</span>
-                      <span className="metadata-value">{selectedComplaint.assigned_department || 'Not assigned'}</span>
-                    </div>
-                    <div className="metadata-item">
-                      <span className="metadata-label">Submitted By</span>
-                      <span className="metadata-value">{selectedComplaint.submitted_by || 'Anonymous'}</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="detail-section">
-                  <h3>💬 Public Comments ({selectedComplaint.comments?.length || 0})</h3>
-                  {selectedComplaint.comments && selectedComplaint.comments.length > 0 ? (
-                    <div className="comments-list">
-                      {selectedComplaint.comments.map((comment, idx) => (
-                        <div key={idx} className="comment">
-                          <div className="comment-header">
-                            <span className="comment-author">{comment.user || 'Anonymous'}</span>
-                            <span className="comment-date">
-                              {new Date(comment.timestamp).toLocaleString()}
-                            </span>
-                          </div>
-                          <p>{comment.text}</p>
-                        </div>
-                      ))}
-                    </div>
+              {showNotifications && (
+                <div className="notifications-dropdown">
+                  <h4>Recent Activity</h4>
+                  {notifications.length === 0 ? (
+                    <p className="no-notifications">No recent activity</p>
                   ) : (
-                    <p className="no-comments">No public comments yet.</p>
+                    <ul>
+                      {notifications.map((n, idx) => (
+                        <li key={idx} className={n.type === 'priority_complaint' ? 'urgent-notification' : ''}>
+                          <strong>{n.type.replace('_', ' ').toUpperCase()}</strong>
+                          <span>{n.message}</span>
+                          <small>{n.time_ago || new Date(n.timestamp).toLocaleTimeString()}</small>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
-                
-                <div className="detail-section">
-                  <h3>📝 Admin Notes</h3>
-                  <div className="notes-section">
-                    <textarea 
-                      value={noteText}
-                      onChange={(e) => setNoteText(e.target.value)}
-                      placeholder="Add administrative notes about this complaint..."
-                      className="admin-notes"
-                      rows={4}
-                    ></textarea>
-                    <button 
-                      className="save-notes"
-                      onClick={() => saveAdminNote(selectedComplaint._id, noteText)}
-                    >
-                      Save Note
-                    </button>
-                    
-                    {/* Display existing admin notes */}
-                    {selectedComplaint.admin_notes && selectedComplaint.admin_notes.length > 0 && (
-                      <div className="admin-notes-history">
-                        <h4>Previous Notes</h4>
-                        {selectedComplaint.admin_notes.map((note, idx) => (
-                          <div key={idx} className="admin-note-item">
-                            <div className="admin-note-header">
-                              <span className="admin-name">{note.admin || 'Administrator'}</span>
-                              <span className="note-date">
-                                {new Date(note.timestamp).toLocaleString()}
-                              </span>
-                            </div>
-                            <p className="admin-note-text">{note.text}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
-          ) : (
-            <div className="analytics-dashboard">
-              <h2>📈 Analytics Overview</h2>
-              
-              <div className="analytics-grid">
-                <div className="analytics-card total-complaints">
-                  <div className="card-icon">📋</div>
-                  <h3>Total Complaints</h3>
-                  <div className="analytics-value">{analytics.total}</div>
-                </div>
-                
-                <div className="analytics-card pending-complaints">
-                  <div className="card-icon">⏳</div>
-                  <h3>Pending</h3>
-                  <div className="analytics-value">{analytics.new + analytics.inProgress}</div>
-                </div>
-                
-                <div className="analytics-card resolved-complaints">
-                  <div className="card-icon">✅</div>
-                  <h3>Resolved</h3>
-                  <div className="analytics-value">{analytics.resolved}</div>
-                </div>
-                
-                <div className="analytics-card departments">
-                  <div className="card-icon">🏢</div>
-                  <h3>Departments</h3>
-                  <div className="analytics-value">{Object.keys(analytics.departmentCounts).length}</div>
-                </div>
-              </div>
-              
-              <div className="charts-container">
-                {renderStatusChart()}
-                {renderCategoryChart()}
-                {renderDepartmentChart()}
-              </div>
-              
-              <div className="recent-activity">
-                <h3>🕒 Recent Activity</h3>
-                <div className="activity-list">
-                  {recentActivity.map(activity => (
-                    <div key={activity.id} className="activity-item">
-                      <div className="activity-icon">{activity.icon}</div>
-                      <div className="activity-content">
-                        <p>{activity.message}</p>
-                        <span className="activity-time">{activity.time}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            <button className="theme-toggle" onClick={() => setIsDarkMode(!isDarkMode)}>
+              {isDarkMode ? '☀️' : '🌙'}
+            </button>
+            <div className="admin-profile">
+              <div className="avatar">A</div>
+              <span className="profile-name">System Administrator</span>
+            </div>
+          </div>
+        </header>
+
+        <section className="admin-viewport">
+          {view === 'overview' && <DashboardOverview analytics={advancedAnalytics} loading={loading} />}
+          {view === 'complaints' && (
+            <ComplaintManagement
+              complaints={complaints}
+              loading={loading}
+              onViewDetails={setSelectedComplaint}
+              onUpdateStatus={handleUpdateStatus}
+              onAssignDept={handleAssignDept}
+            />
+          )}
+          {view === 'emergency' && (
+            <EmergencyPanel
+              complaints={complaints}
+              loading={loading}
+              onViewDetails={setSelectedComplaint}
+            />
+          )}
+          {view === 'analytics' && <AnalyticsPage analytics={advancedAnalytics} loading={loading} />}
+          {view === 'performance' && <DepartmentPerformance performance={deptPerformance} loading={loading} />}
+          {view === 'settings' && (
+            <div className="admin-page-content">
+              <h1>System Settings</h1>
+              <p>Governance configuration panel - Restricted area.</p>
             </div>
           )}
-        </div>
-      </div>
+        </section>
+      </main>
+
+      {selectedComplaint && (
+        <DetailsModal
+          complaint={selectedComplaint}
+          onClose={() => setSelectedComplaint(null)}
+          onUpdateStatus={handleUpdateStatus}
+          API_URL={API_URL}
+        />
+      )}
     </div>
   );
-}
+};
 
 export default AdminDashboard;

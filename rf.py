@@ -8,33 +8,58 @@ import uuid
 from typing import Dict, List, Optional
 from werkzeug.utils import secure_filename
 import json
+import re
+import functools
+import jwt
+import bleach
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 CORS(app)  # Allow frontend to communicate with Flask
+
+from ml_engine import GrievixML
 
 # Configuration
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 DB_NAME = "municipal_complaints"
 COLLECTION_NAME = "complaints"
-MODEL_VERSION = "1.2.0"
+MODEL_VERSION = "1.4.0"
 
 # Configure upload folder for complaint photos
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+
+# Security Configuration
+app.config['SECRET_KEY'] = os.getenv("JWT_SECRET", "grievix_super_secret_key_2026")
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
+
+# Initialize DB collections as None
+db = None
+complaints_collection = None
+activity_collection = None
+security_logs_collection = None
 
 # Connect to MongoDB
 try:
     client = MongoClient(MONGODB_URI)
     db = client[DB_NAME]
     complaints_collection = db[COLLECTION_NAME]
-    activity_collection = db["activity"]  # Add activity collection
-    print("\u2705 MongoDB connected successfully!")
+    activity_collection = db["activity"]
+    security_logs_collection = db["security_logs"]
+    users_collection = db["users"]  # User collection
+    print("✅ MongoDB connected successfully!")
 except Exception as e:
-    print(f"\u274c MongoDB connection error: {e}")
-    db = None
+    print(f"❌ MongoDB connection error: {e}")
 
 # Define paths for ML components
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,19 +67,13 @@ MODEL_PATH = os.path.join(BASE_DIR, "random_forest_model_retrained.pkl")
 VECTORIZER_PATH = os.path.join(BASE_DIR, "tfidf_vectorizer_retrained.pkl")
 ENCODER_PATH = os.path.join(BASE_DIR, "label_encoder_retrained.pkl")
 
-# Load ML components
-try:
-    model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
-    tfidf_vectorizer = joblib.load(VECTORIZER_PATH) if os.path.exists(VECTORIZER_PATH) else None
-    label_encoder = joblib.load(ENCODER_PATH) if os.path.exists(ENCODER_PATH) else None
+# Initialize the new ML engine
+ml_engine = GrievixML(MODEL_PATH, VECTORIZER_PATH, ENCODER_PATH)
 
-    if all([model, tfidf_vectorizer, label_encoder]):
-        print(f"\u2705 All ML components loaded successfully! (v{MODEL_VERSION})")
-    else:
-        print("\u26A0 Warning: Some ML components are missing!")
-except Exception as e:
-    print(f"\u274c Error loading ML components: {e}")
-    model, tfidf_vectorizer, label_encoder = None, None, None
+# Re-assign for backward compatibility if needed, but we'll use ml_engine mostly
+model = ml_engine.model
+tfidf_vectorizer = ml_engine.tfidf_vectorizer
+label_encoder = ml_engine.label_encoder
 
 # Define your categories and keywords
 CATEGORIES = [
@@ -80,20 +99,166 @@ def manual_category_detection(complaint_text: str) -> Optional[str]:
     """Check if complaint should be manually categorized based on keywords"""
     complaint_text = complaint_text.lower()
     for category, keywords in CATEGORY_KEYWORDS.items():
-        if any(keyword.lower() in complaint_text for keyword in keywords):
-            print(f"🔧 Manual keyword match: {category}")
+        if any(kw in complaint_text for kw in keywords):
             return category
     return None
 
-def validate_prediction(predicted_category: str, complaint_text: str) -> str:
-    """Ensure predicted category makes sense for the complaint"""
-    complaint_text = complaint_text.lower()
+def validate_prediction(predicted: str, text: str) -> str:
+    """Extra validation layer for AI predictions"""
+    text_lower = text.lower()
     
-    # If prediction is not in our defined categories, default to Other
-    if predicted_category not in CATEGORIES:
-        return "Other"
-    
-    return predicted_category
+    # If the model predicts "Water Issues" but text contains "garbage", correct it
+    if "garbage" in text_lower or "trash" in text_lower:
+        return "Garbage Issues"
+    if "pothole" in text_lower or "road" in text_lower:
+        return "Road Issues"
+    if "leak" in text_lower or "water" in text_lower:
+        return "Water Issues"
+    if "electricity" in text_lower or "shock" in text_lower or "power" in text_lower:
+        return "Electricity"
+    if "drainage" in text_lower or "sewer" in text_lower:
+        return "Drainage Issues"
+        
+    return predicted if predicted in CATEGORIES else "Other"
+
+# Security Middleware & Decorators
+def log_security_event(action, status, message):
+    """Log security-related events to MongoDB."""
+    try:
+        log_entry = {
+            "ip": request.remote_addr,
+            "timestamp": datetime.datetime.utcnow(),
+            "action": action,
+            "status": status,
+            "message": message,
+            "user_agent": request.headers.get('User-Agent')
+        }
+        security_logs_collection.insert_one(log_entry)
+    except:
+        pass
+
+def sanitize_content(text):
+    """Sanitize input to prevent XSS and injection."""
+    if not text: return ""
+    # Remove HTML tags using bleach
+    clean_text = bleach.clean(text, tags=[], attributes={}, strip=True)
+    # Basic NoSQL injection prevention
+    clean_text = re.sub(r'[\$\{\}]', '', clean_text)
+    return clean_text.strip()
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def admin_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'Token is missing!'}), 401
+        
+        try:
+            if token.startswith('Bearer '):
+                token = token.split(" ")[1]
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            if data.get('role') != 'admin':
+                return jsonify({'error': 'Admin privilege required!'}), 403
+        except Exception as e:
+            return jsonify({'error': 'Token is invalid or expired!'}), 401
+        
+        return f(*args, **kwargs)
+    return decorated
+
+@app.before_request
+def basic_firewall():
+    """Simple firewall to block suspicious IPs."""
+    # Mock blocked IPs list (in a real app, this would be in DB/Redis)
+    BLOCKED_IPS = ["1.2.3.4", "9.9.9.9"]
+    if request.remote_addr in BLOCKED_IPS:
+        log_security_event("firewall_block", "denied", f"Blocked IP {request.remote_addr} tried to access")
+        return jsonify({"error": "Access denied by security firewall"}), 403
+
+@app.route("/api/register", methods=["POST"])
+@limiter.limit("3 per hour")
+def register():
+    """User registration endpoint"""
+    try:
+        data = request.json
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not email or not password:
+            return jsonify({"error": "Email and password required"}), 400
+            
+        if users_collection.find_one({"email": email}):
+            return jsonify({"error": "User already exists"}), 400
+            
+        user_entry = {
+            "fullName": data.get('fullName'),
+            "email": email,
+            "password": password,  # In production, use hashed passwords!
+            "role": "user",
+            "created_at": datetime.datetime.utcnow(),
+            "address": data.get('address'),
+            "district": data.get('district'),
+            "pincode": data.get('pincode'),
+            "phone": data.get('phone')
+        }
+        users_collection.insert_one(user_entry)
+        log_security_event("registration", "success", f"User {email} registered")
+        return jsonify({"success": True, "message": "User registered successfully"})
+    except Exception as e:
+        print(f"❌ Error in register: {e}")
+        return jsonify({"error": "Registration failed"}), 500
+
+@app.route("/api/login", methods=["POST"])
+@limiter.limit("10 per minute")
+def login():
+    """Secure login endpoint issuing JWT."""
+    try:
+        data = request.json
+        email = data.get('email')
+        password = data.get('password')
+        
+        # 1. Check Hardcoded Admin
+        if email == "admin@grievix.com" and password == "admin123":
+            token = jwt.encode({
+                'user': email,
+                'role': 'admin',
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=12)
+            }, app.config['SECRET_KEY'], algorithm="HS256")
+            
+            # Handle potential bytes from old PyJWT
+            if isinstance(token, bytes):
+                token = token.decode('utf-8')
+                
+            log_security_event("login", "success", f"Admin {email} logged in")
+            return jsonify({'token': token, 'role': 'admin', 'email': email})
+
+        # 2. Check Database Users
+        user = users_collection.find_one({"email": email, "password": password})
+        if user:
+            token = jwt.encode({
+                'user': email,
+                'role': 'user',
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+            }, app.config['SECRET_KEY'], algorithm="HS256")
+            
+            if isinstance(token, bytes):
+                token = token.decode('utf-8')
+                
+            log_security_event("login", "success", f"User {email} logged in")
+            return jsonify({
+                'token': token, 
+                'role': 'user', 
+                'email': email,
+                'fullName': user.get('fullName')
+            })
+        
+        log_security_event("login", "failed", f"Failed attempt for {email}")
+        return jsonify({'error': 'Invalid credentials!'}), 401
+    except Exception as e:
+        print(f"❌ Error in login: {e}")
+        return jsonify({"error": "Login failed"}), 500
 
 @app.route("/", methods=["GET"])
 def home():
@@ -110,6 +275,11 @@ def home():
         "categories": CATEGORIES
     })
 
+@app.route('/uploads/<path:filename>')
+def serve_uploads(filename):
+    """Serve uploaded complaint photos"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
 @app.route("/predict_category", methods=["POST"])
 def predict_category():
     """Endpoint to predict category without saving the complaint"""
@@ -117,7 +287,7 @@ def predict_category():
         data = request.json
         complaint_text = ""
         if data is not None:
-            complaint_text = data.get("complaint", "").strip().lower()
+            complaint_text = data.get("complaint", "").strip()
         else:
             complaint_text = ""
 
@@ -125,175 +295,191 @@ def predict_category():
             return jsonify({"error": "Complaint must be at least 10 characters"}), 400
 
         # First try manual categorization
-        manual_category = manual_category_detection(complaint_text)
+        manual_category = manual_category_detection(complaint_text.lower())
         
         if manual_category:
             predicted_category = manual_category
-        elif model and tfidf_vectorizer and label_encoder:
-            # Fall back to ML model if manual detection fails
-            complaint_tfidf = tfidf_vectorizer.transform([complaint_text])
-            predicted_category_num = model.predict(complaint_tfidf)[0]
-            predicted_category = label_encoder.inverse_transform([predicted_category_num])[0]
-            predicted_category = validate_prediction(predicted_category, complaint_text)
+            source = "manual"
         else:
-            # If no model available, use manual detection or default to Other
-            predicted_category = manual_category_detection(complaint_text) or "Other"
+            # Fall back to ML engine
+            predicted_category = ml_engine.predict_category(complaint_text)
+            predicted_category = validate_prediction(predicted_category, complaint_text.lower())
+            source = "model"
 
         # Final validation
         if predicted_category not in CATEGORIES:
             predicted_category = "Other"
 
+        # Also get sentiment for preview
+        sentiment_score = ml_engine.get_sentiment_score(complaint_text)
+
         return jsonify({
             "category": predicted_category,
             "confidence": 0.85,  # Mock confidence score
-            "auto_corrected": bool(manual_category)
+            "auto_corrected": bool(manual_category),
+            "prediction_source": source,
+            "sentiment_score": sentiment_score
         })
 
     except Exception as e:
         print(f"❌ Error in predict_category: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
+@app.route("/check_duplicates", methods=["POST"])
+def check_duplicates():
+    """Check for existing similar complaints"""
+    try:
+        data = request.json
+        if not data or "complaint" not in data:
+            return jsonify({"error": "Missing complaint text"}), 400
+            
+        complaint_text = data.get("complaint", "").strip()
+        
+        # Get recent complaints for comparison (limit to 100 for performance)
+        recent_complaints = list(complaints_collection.find({}, limit=100).sort("timestamp", -1))
+        
+        duplicates = ml_engine.check_duplicates(complaint_text, recent_complaints)
+        
+        return jsonify({
+            "has_duplicates": len(duplicates) > 0,
+            "duplicates": duplicates
+        })
+    except Exception as e:
+        print(f"❌ Error in check_duplicates: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
 @app.route("/submit_complaint", methods=["POST"])
+@limiter.limit("5 per minute")
 def submit_complaint():
     try:
         print("Received complaint submission request")
         
-        # Handle both JSON and form data
+        # Security: Input Sanitization
         if request.is_json:
             data = request.json
-            complaint_text = ""
-            location = ""
-            has_photo = False
-            submitted_by = "Anonymous"
-            
-            if data is not None:
-                complaint_text = data.get("complaint", "").strip()
-                location = data.get("location", "")
-                has_photo = data.get("hasPhoto", False)
-                submitted_by = data.get("submitted_by", "Anonymous")
+            complaint_text = sanitize_content(data.get("complaint", ""))
+            location = sanitize_content(data.get("location", ""))
+            lat = data.get("lat")
+            lng = data.get("lng")
+            has_photo = data.get("hasPhoto", False)
+            submitted_by = sanitize_content(data.get("submitted_by", "Anonymous"))
+            tags = [sanitize_content(t) for t in data.get("tags", [])]
+            anonymous = data.get("anonymous", False)
         else:
-            complaint_text = request.form.get("complaint", "").strip()
-            location = request.form.get("location", "Not specified")
-            has_photo = 'photo' in request.files and bool(request.files['photo'].filename)
-            submitted_by = request.form.get("submitted_by", "Anonymous")
+            complaint_text = sanitize_content(request.form.get("complaint", ""))
+            location = sanitize_content(request.form.get("location", "Not specified"))
+            lat = request.form.get("lat")
+            lng = request.form.get("lng")
+            has_photo = 'photo' in request.files
+            submitted_by = sanitize_content(request.form.get("submitted_by", "Anonymous"))
+            tags_str = request.form.get("tags", "")
+            tags = [sanitize_content(t.strip()) for t in tags_str.split(",") if t.strip()] if tags_str else []
+            anonymous = request.form.get("anonymous", "false").lower() == "true"
 
-        print(f"Complaint text: {complaint_text}")
-        print(f"Location: {location}")
-        
         if len(complaint_text) < 10:
-            return jsonify({"success": False, "message": "Complaint must be at least 10 characters"}), 400
+            return jsonify({"success": False, "message": "Complaint too short"}), 400
 
-        # First try manual categorization
-        manual_category = manual_category_detection(complaint_text.lower())
+        # AI: Category & Sentiment
+        predicted_category = ml_engine.predict_category(complaint_text)
+        sentiment_score = ml_engine.get_sentiment_score(complaint_text)
         
-        if manual_category:
-            predicted_category = manual_category
-        elif model and tfidf_vectorizer and label_encoder:
-            # Fall back to ML model if manual detection fails
-            complaint_tfidf = tfidf_vectorizer.transform([complaint_text.lower()])
-            predicted_category_num = model.predict(complaint_tfidf)[0]
-            predicted_category = label_encoder.inverse_transform([predicted_category_num])[0]
-            predicted_category = validate_prediction(predicted_category, complaint_text.lower())
-        else:
-            # If no model available, use manual detection or default to Other
-            predicted_category = manual_category_detection(complaint_text.lower()) or "Other"
-
-        print(f"Predicted category: {predicted_category}")
-        
-        # Final validation
-        if predicted_category not in CATEGORIES:
-            predicted_category = "Other"
-
-        # Generate unique ID for the complaint
-        complaint_id = str(uuid.uuid4())
-        
-        # Get additional fields from form data
-        severity = request.form.get("severity", 5)
-        try:
-            severity = int(severity)
-        except (ValueError, TypeError):
-            severity = 5
+        # AI: Priority & Emergency
+        boosted_priority, priority_reasons = ml_engine.calculate_priority_boost(complaint_text, 5)
+        is_emergency = ml_engine.detect_emergency(complaint_text)
+        if is_emergency:
+            boosted_priority = 10.0 # Force max priority for emergencies
             
-        tags_json = request.form.get("tags", "[]")
-        try:
-            tags = json.loads(tags_json) if isinstance(tags_json, str) else []
-        except (json.JSONDecodeError, TypeError):
-            tags = []
-            
-        anonymous = request.form.get("anonymous", "false").lower() == "true"
+        # AI: Resolution Time Prediction
+        pred_time = ml_engine.predict_resolution_time(predicted_category, sentiment_score)
         
-        # Calculate priority score based on severity and keywords
-        priority_score = severity  # Start with severity rating
-        if "urgent" in complaint_text.lower() or "emergency" in complaint_text.lower():
-            priority_score = min(10, priority_score + 2)  # Boost by 2, max 10
-        elif "soon" in complaint_text.lower() or "important" in complaint_text.lower():
-            priority_score = min(10, priority_score + 1)  # Boost by 1, max 10
-            
-        # Handle photo upload if present
+        # AI: Duplicate Detection (Sim > 0.75)
+        recent_complaints = list(complaints_collection.find({}, limit=50).sort("timestamp", -1))
+        duplicates = ml_engine.check_duplicates(complaint_text, recent_complaints, threshold=0.75)
+        is_duplicate = len(duplicates) > 0
+        parent_id = duplicates[0]['id'] if is_duplicate else None
+        
+        # Security: File Upload Protection
         photo_filename = None
         if has_photo and 'photo' in request.files:
             photo = request.files['photo']
-            if photo.filename:
-                try:
-                    photo_filename = secure_filename(f"{complaint_id}_{photo.filename}")
-                    photo_path = os.path.join(app.config['UPLOAD_FOLDER'], photo_filename)
-                    photo.save(photo_path)
-                    print(f"Photo saved at: {photo_path}")
-                except Exception as e:
-                    print(f"Error saving photo: {e}")
-                    photo_filename = None
-            
-        # Store complaint with metadata
+            if photo and allowed_file(photo.filename):
+                complaint_id_temp = str(uuid.uuid4())
+                ext = photo.filename.rsplit('.', 1)[1].lower()
+                photo_filename = f"{complaint_id_temp}.{ext}"
+                photo.save(os.path.join(app.config['UPLOAD_FOLDER'], photo_filename))
+            elif photo:
+                return jsonify({"error": "Invalid file type"}), 400
+
+        # Auto-assign department based on category
+        department_mapping = {
+            "Water Issues": "Water Dept",
+            "Road Issues": "Public Works",
+            "Garbage Issues": "Sanitation",
+            "Electricity": "Electrical",
+            "Drainage Issues": "Public Works"
+        }
+        assigned_department = department_mapping.get(predicted_category, "Unassigned")
+
+        complaint_id = str(uuid.uuid4())
         complaint_entry = {
             "_id": complaint_id,
             "complaint": complaint_text,
             "category": predicted_category,
             "location": location,
+            "coords": {"lat": lat, "lng": lng} if lat and lng else None,
             "has_photo": bool(photo_filename),
             "photo_path": photo_filename,
             "timestamp": datetime.datetime.utcnow(),
-            "prediction_source": "manual" if manual_category else "model",
-            "model_version": MODEL_VERSION,
             "status": "new",
-            "priority_score": priority_score,
-            "severity": severity,
-            "tags": tags,
+            "priority_score": boosted_priority,
+            "is_emergency": is_emergency,
+            "sentiment_score": sentiment_score,
+            "predicted_resolution_time": pred_time,
+            "is_duplicate": is_duplicate,
+            "parent_complaint_id": parent_id,
+            "votes": 1 if is_duplicate else 0, # If duplicate, count as a vote/support
+            "submitted_by": submitted_by,
             "anonymous": anonymous,
-            "votes": 0,
-            "comments": [],
-            "submitted_by": submitted_by
+            "assigned_department": assigned_department
         }
         
-        print(f"Inserting complaint with ID: {complaint_id}")
-        complaints_collection.insert_one(complaint_entry)
-        
+        if is_duplicate:
+            # Increase vote count for parent if duplicate
+            complaints_collection.update_one({"_id": parent_id}, {"$inc": {"votes": 1}})
+            
         # Check if this is a priority complaint and log it
         check_priority_complaint(complaint_entry)
-        
-        # Log activity
-        log_activity("new_complaint", f"New complaint submitted in {predicted_category} category")
+            
+        complaints_collection.insert_one(complaint_entry)
+        log_security_event("complaint_submission", "success", f"Complaint {complaint_id} submitted")
         
         return jsonify({
             "success": True,
             "complaint_id": complaint_id,
-            "category": predicted_category,
-            "message": "Complaint submitted successfully!"
+            "is_emergency": is_emergency,
+            "predicted_resolution": f"{pred_time} days",
+            "priority_score": boosted_priority,
+            "category": predicted_category
         })
     except Exception as e:
         print(f"❌ Error in submit_complaint: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+        log_security_event("complaint_submission", "error", str(e))
+        return jsonify({"error": "Submission failed"}), 500
 
 @app.route("/update_status", methods=["POST"])
+@admin_required
 def update_status():
-    """Update the status of a complaint"""
+    """Update the status of a complaint and optionally add an admin note"""
     try:
         data = request.json
         complaint_id = None
         new_status = None
+        admin_note = None
         
         if data is not None:
             complaint_id = data.get("complaintId")
             new_status = data.get("status")
+            admin_note = data.get("adminNote")
         
         if not complaint_id or not new_status:
             return jsonify({"error": "Missing required fields"}), 400
@@ -301,9 +487,24 @@ def update_status():
         if new_status not in ["new", "in_progress", "resolved"]:
             return jsonify({"error": "Invalid status value"}), 400
             
+        update_data = {"status": new_status}
+        if new_status == "resolved":
+            update_data["resolved_at"] = datetime.datetime.utcnow()
+            
+        update_doc = {"$set": update_data}
+        if admin_note:
+            update_data["admin_note"] = admin_note
+            update_doc["$push"] = {
+                "admin_notes": {
+                    "admin": "System Administrator",
+                    "text": admin_note,
+                    "timestamp": datetime.datetime.utcnow()
+                }
+            }
+            
         result = complaints_collection.update_one(
             {"_id": complaint_id},
-            {"$set": {"status": new_status}}
+            update_doc
         )
         
         if result.matched_count == 0:
@@ -319,6 +520,7 @@ def update_status():
         return jsonify({"error": "Internal server error"}), 500
         
 @app.route("/assign_department", methods=["POST"])
+@admin_required
 def assign_department():
     """Assign a complaint to a department"""
     try:
@@ -347,6 +549,7 @@ def assign_department():
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/save_admin_note", methods=["POST"])
+@admin_required
 def save_admin_note():
     """Save an admin note for a complaint"""
     try:
@@ -459,6 +662,130 @@ def get_analytics():
         print(f"Error in get_analytics: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route("/admin_analytics", methods=["GET"])
+@admin_required
+def admin_analytics():
+    """Advanced analytics for admin dashboard"""
+    try:
+        # 1. Total, Resolved, Pending counts
+        total = complaints_collection.count_documents({})
+        resolved = complaints_collection.count_documents({"status": "resolved"})
+        pending = complaints_collection.count_documents({"status": {"$in": ["new", "in_progress"]}})
+        
+        # 2. Complaints by category
+        category_pipeline = [
+            {"$group": {"_id": "$category", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}}
+        ]
+        categories = list(complaints_collection.aggregate(category_pipeline))
+        
+        # 3. Average resolution time (days)
+        res_time_pipeline = [
+            {"$match": {"status": "resolved", "resolved_at": {"$exists": True}, "timestamp": {"$exists": True}}},
+            {"$project": {
+                "duration": {"$subtract": ["$resolved_at", "$timestamp"]}
+            }},
+            {"$group": {
+                "_id": None,
+                "avg_ms": {"$avg": "$duration"}
+            }}
+        ]
+        res_time_result = list(complaints_collection.aggregate(res_time_pipeline))
+        avg_res_time = 0
+        if res_time_result:
+            # Convert ms to days
+            avg_res_time = round(res_time_result[0]["avg_ms"] / (1000 * 60 * 60 * 24), 2)
+            
+        # 4. Top 5 highest priority complaints
+        top_priority = list(complaints_collection.find(
+            {"status": {"$ne": "resolved"}},
+            sort=[("priority_score", -1), ("timestamp", -1)],
+            limit=5
+        ))
+        for p in top_priority:
+            p["_id"] = str(p["_id"])
+            if "timestamp" in p:
+                p["timestamp"] = p["timestamp"].isoformat()
+        
+        # 6. Emergency count
+        emergency_count = complaints_collection.count_documents({"is_emergency": True})
+        
+        # 5. Complaints over time (grouped by day)
+        time_pipeline = [
+            {"$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
+                "count": {"$sum": 1}
+            }},
+            {"$sort": {"_id": 1}},
+            {"$limit": 30}
+        ]
+        over_time_raw = list(complaints_collection.aggregate(time_pipeline))
+        over_time = [{"date": item["_id"], "count": item["count"]} for item in over_time_raw]
+        
+        # Format category distribution for Recharts
+        category_formatted = [{"name": item["_id"], "value": item["count"]} for item in categories]
+        
+        return jsonify({
+            "total_complaints": total,
+            "resolved_count": resolved,
+            "pending_count": pending,
+            "emergency_count": emergency_count,
+            "category_distribution": category_formatted,
+            "average_resolution_time": avg_res_time,
+            "top_priority_complaints": top_priority,
+            "complaints_over_time": over_time
+        })
+    except Exception as e:
+        print(f"❌ Error in admin_analytics: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/department_performance", methods=["GET"])
+@admin_required
+def department_performance():
+    """Performance metrics for each department"""
+    try:
+        # Group by department
+        pipeline = [
+            {"$group": {
+                "_id": "$assigned_department",
+                "total": {"$sum": 1},
+                "resolved": {"$sum": {"$cond": [{"$eq": ["$status", "resolved"]}, 1, 0]}},
+                "pending": {"$sum": {"$cond": [{"$in": ["$status", ["new", "in_progress"]]}, 1, 0]}},
+                "avg_res_time": {"$avg": {
+                    "$cond": [
+                        {"$and": [
+                            {"$eq": ["$status", "resolved"]}, 
+                            {"$ne": [{"$type": "$resolved_at"}, "missing"]},
+                            {"$ne": [{"$type": "$timestamp"}, "missing"]}
+                        ]},
+                        {"$subtract": ["$resolved_at", "$timestamp"]},
+                        None
+                    ]
+                }}
+            }}
+        ]
+        results = list(complaints_collection.aggregate(pipeline))
+        
+        # Format results
+        performance_data = []
+        for res in results:
+            dept_name = res["_id"] if res["_id"] else "Unassigned"
+            # Convert avg_res_time from ms to days
+            avg_days = round(res["avg_res_time"] / (1000 * 60 * 60 * 24), 2) if res["avg_res_time"] else 0
+            
+            performance_data.append({
+                "department": dept_name,
+                "total_assigned": res["total"],
+                "resolved_count": res["resolved"],
+                "pending_count": res["pending"],
+                "average_resolution_time": avg_days
+            })
+            
+        return jsonify(performance_data)
+    except Exception as e:
+        print(f"❌ Error in department_performance: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/get_complaints", methods=["GET"])
 def get_complaints():
     """Get complaints with optional filtering and sorting"""
@@ -509,11 +836,28 @@ def get_complaints():
         except Exception as e:
             print(f"Warning: Could not create text index: {e}")
         
+        # Auto Escalation Logic: If status = 'new' and older than 3 days, increase priority and mark escalated
+        three_days_ago = datetime.datetime.utcnow() - datetime.timedelta(days=3)
+        escalation_result = complaints_collection.update_many(
+            {
+                "status": "new",
+                "timestamp": {"$lt": three_days_ago},
+                "escalated": {"$ne": True}
+            },
+            {
+                "$inc": {"priority_score": 2},
+                "$set": {"escalated": True}
+            }
+        )
+        if escalation_result.modified_count > 0:
+            print(f"🚀 Escalated {escalation_result.modified_count} complaints")
+        
         # Execute query
         total_count = complaints_collection.count_documents(query)
+        # Emergency Priority sorting: is_emergency DESC, then requested sort_by
         complaints = list(complaints_collection.find(
             query, 
-            sort=sort_order,
+            sort=[("is_emergency", -1)] + sort_order,
             skip=skip,
             limit=per_page
         ))
@@ -714,6 +1058,7 @@ def check_priority_complaint(complaint_entry):
     # Priority score > 8 or contains urgent keywords
     is_priority = (
         complaint_entry.get("priority_score", 5) >= 8 or
+        complaint_entry.get("is_emergency", False) or
         any(keyword in complaint_entry.get("complaint", "").lower() 
             for keyword in ["urgent", "emergency", "immediate", "critical", "asap"])
     )
@@ -732,6 +1077,8 @@ def check_priority_complaint(complaint_entry):
         reason = []
         if priority_score >= 8:
             reason.append(f"High priority score ({priority_score})")
+        if complaint_entry.get("is_emergency", False):
+            reason.append("Emergency situation")
         if votes >= 5:
             reason.append(f"High votes ({votes})")
         if any(keyword in complaint_entry.get("complaint", "").lower() 
@@ -750,6 +1097,40 @@ def check_priority_complaint(complaint_entry):
         )
     
     return is_priority
+
+@app.route("/complaint_locations", methods=["GET"])
+def get_complaint_locations():
+    """Returns locations for heatmap."""
+    complaints = list(complaints_collection.find({"coords": {"$ne": None}, "status": {"$ne": "resolved"}}))
+    locations = []
+    for c in complaints:
+        locations.append({
+            "lat": c["coords"]["lat"],
+            "lng": c["coords"]["lng"],
+            "category": c["category"],
+            "intensity": 1.0 + (c.get("priority_score", 5) / 10.0)
+        })
+    return jsonify(locations)
+
+@app.route("/hotspot_analysis", methods=["GET"])
+def hotspot_analysis():
+    """Identifies high-density complaint areas."""
+    # Simple aggregation by rounded coordinates (0.01 degree approx 1km)
+    pipeline = [
+        {"$match": {"coords": {"$ne": None}}},
+        {"$group": {
+            "_id": {
+                "lat": {"$round": ["$coords.lat", 2]},
+                "lng": {"$round": ["$coords.lng", 2]}
+            },
+            "count": {"$sum": 1},
+            "avg_priority": {"$avg": "$priority_score"}
+        }},
+        {"$sort": {"count": -1}},
+        {"$limit": 10}
+    ]
+    hotspots = list(complaints_collection.aggregate(pipeline))
+    return jsonify(hotspots)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
