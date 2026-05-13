@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/Grievix/static/css/main.5a92cbdf.css",
+    "main.js": "/Grievix/static/js/main.1fbf7d00.js",
+    "static/js/453.bae7c07e.chunk.js": "/Grievix/static/js/453.bae7c07e.chunk.js",
+    "index.html": "/Grievix/index.html",
+    "main.5a92cbdf.css.map": "/Grievix/static/css/main.5a92cbdf.css.map",
+    "main.1fbf7d00.js.map": "/Grievix/static/js/main.1fbf7d00.js.map",
+    "453.bae7c07e.chunk.js.map": "/Grievix/static/js/453.bae7c07e.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.5a92cbdf.css",
+    "static/js/main.1fbf7d00.js"
+  ]
+}
