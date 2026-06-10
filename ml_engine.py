@@ -1,11 +1,9 @@
 import os
 import joblib
-import numpy as np
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 from sklearn.metrics.pairwise import cosine_similarity
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sklearn.linear_model import LinearRegression
-import datetime
 
 class GrievixML:
     def __init__(self, model_path: str, vectorizer_path: str, encoder_path: str):

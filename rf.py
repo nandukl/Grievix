@@ -1,13 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from pymongo import MongoClient
-import joblib
 import datetime
 import os
 import uuid
-from typing import Dict, List, Optional
-from werkzeug.utils import secure_filename
-import json
+from typing import Optional
 import re
 import functools
 import jwt
@@ -70,10 +67,6 @@ ENCODER_PATH = os.path.join(BASE_DIR, "label_encoder_retrained.pkl")
 # Initialize the new ML engine
 ml_engine = GrievixML(MODEL_PATH, VECTORIZER_PATH, ENCODER_PATH)
 
-# Re-assign for backward compatibility if needed, but we'll use ml_engine mostly
-model = ml_engine.model
-tfidf_vectorizer = ml_engine.tfidf_vectorizer
-label_encoder = ml_engine.label_encoder
 
 # Define your categories and keywords
 CATEGORIES = [
@@ -1135,6 +1128,3 @@ def hotspot_analysis():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
-
-
